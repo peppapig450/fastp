@@ -33,6 +33,10 @@ SingleEndProcessor::SingleEndProcessor(Options* opt){
 
 SingleEndProcessor::~SingleEndProcessor() {
     delete mFilter;
+    if(mUmiProcessor) {
+        delete mUmiProcessor;
+        mUmiProcessor = NULL;
+    }
     if(mDuplicate) {
         delete mDuplicate;
         mDuplicate = NULL;
