@@ -316,8 +316,17 @@ Read* FastqReader::read(){
 	while((name->empty() && !(mBufUsedLen >= mBufDataLen && bufferFinished())) || (!name->empty() && (*name)[0]!='@')){
 		getLine(name);
 	}
-	if(name->empty())
+	if(name->empty()) {
+		if(readInPool)
+			delete readInPool;
+		else {
+			delete name;
+			delete sequence;
+			delete strand;
+			delete quality;
+		}
 		return NULL;
+	}
 
 	getLine(sequence);
 	getLine(strand);
@@ -327,6 +336,14 @@ Read* FastqReader::read(){
 		cerr << *name << endl;
 		cerr << "Expected '+', got " << *strand << endl;
 		cerr << "Your FASTQ may be invalid, please check the tail of your FASTQ file" << endl;
+		if(readInPool)
+			delete readInPool;
+		else {
+			delete name;
+			delete sequence;
+			delete strand;
+			delete quality;
+		}
 		return NULL;
 	}
 
@@ -337,6 +354,14 @@ Read* FastqReader::read(){
 		cerr << *strand << endl;
 		cerr << *quality << endl;
 		cerr << "Your FASTQ may be invalid, please check the tail of your FASTQ file" << endl;
+		if(readInPool)
+			delete readInPool;
+		else {
+			delete name;
+			delete sequence;
+			delete strand;
+			delete quality;
+		}
 		return NULL;
 	}
 
