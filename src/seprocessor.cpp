@@ -307,7 +307,7 @@ bool SingleEndProcessor::processSingleEnd(ReadPack* pack, ThreadConfig* config){
     if(failedOut)
         delete failedOut;
 
-    delete pack->data;
+    delete[] pack->data;
     delete pack;
 
     mPackProcessedCounter++;

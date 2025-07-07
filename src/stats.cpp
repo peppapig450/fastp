@@ -73,37 +73,37 @@ void Stats::extendBuffer(int newBufLen){
         newBuf = new long[newBufLen];
         memset(newBuf, 0, sizeof(long)*newBufLen);
         memcpy(newBuf, mCycleQ30Bases[i], sizeof(long) * mBufLen);
-        delete mCycleQ30Bases[i];
+        delete[] mCycleQ30Bases[i];
         mCycleQ30Bases[i] = newBuf;
 
         newBuf = new long[newBufLen];
         memset(newBuf, 0, sizeof(long)*newBufLen);
         memcpy(newBuf, mCycleQ20Bases[i], sizeof(long) * mBufLen);
-        delete mCycleQ20Bases[i];
+        delete[] mCycleQ20Bases[i];
         mCycleQ20Bases[i] = newBuf;
 
         newBuf = new long[newBufLen];
         memset(newBuf, 0, sizeof(long)*newBufLen);
         memcpy(newBuf, mCycleBaseContents[i], sizeof(long) * mBufLen);
-        delete mCycleBaseContents[i];
+        delete[] mCycleBaseContents[i];
         mCycleBaseContents[i] = newBuf;
 
         newBuf = new long[newBufLen];
         memset(newBuf, 0, sizeof(long)*newBufLen);
         memcpy(newBuf, mCycleBaseQual[i], sizeof(long) * mBufLen);
-        delete mCycleBaseQual[i];
+        delete[] mCycleBaseQual[i];
         mCycleBaseQual[i] = newBuf;
     }
     newBuf = new long[newBufLen];
     memset(newBuf, 0, sizeof(long)*newBufLen);
     memcpy(newBuf, mCycleTotalBase, sizeof(long)*mBufLen);
-    delete mCycleTotalBase;
+    delete[] mCycleTotalBase;
     mCycleTotalBase = newBuf;
 
     newBuf = new long[newBufLen];
     memset(newBuf, 0, sizeof(long)*newBufLen);
     memcpy(newBuf, mCycleTotalQual, sizeof(long)*mBufLen);
-    delete mCycleTotalQual;
+    delete[] mCycleTotalQual;
     mCycleTotalQual = newBuf;
 
     mBufLen = newBufLen;
@@ -111,31 +111,31 @@ void Stats::extendBuffer(int newBufLen){
 
 Stats::~Stats() {
     for(int i=0; i<8; i++){
-        delete mCycleQ30Bases[i];
+        delete[] mCycleQ30Bases[i];
         mCycleQ30Bases[i] = NULL;
 
-        delete mCycleQ20Bases[i];
+        delete[] mCycleQ20Bases[i];
         mCycleQ20Bases[i] = NULL;
 
-        delete mCycleBaseContents[i];
+        delete[] mCycleBaseContents[i];
         mCycleBaseContents[i] = NULL;
 
-        delete mCycleBaseQual[i];
+        delete[] mCycleBaseQual[i];
         mCycleBaseQual[i] = NULL;
     }
 
-    delete mCycleTotalBase;
-    delete mCycleTotalQual;
+    delete[] mCycleTotalBase;
+    delete[] mCycleTotalQual;
 
     // delete memory of curves
     map<string, double*>::iterator iter;
     for(iter = mQualityCurves.begin(); iter != mQualityCurves.end(); iter++) {
-        delete iter->second;
+        delete[] iter->second;
     }
     for(iter = mContentCurves.begin(); iter != mContentCurves.end(); iter++) {
-        delete iter->second;
+        delete[] iter->second;
     }
-    delete mKmer;
+    delete[] mKmer;
 
     deleteOverRepSeqDist();
 }
@@ -985,7 +985,7 @@ void Stats::deleteOverRepSeqDist() {
     map<string, long>::iterator iter;
     for(iter = mOverRepSeq.begin(); iter!=mOverRepSeq.end(); iter++) {
         string seq = iter->first;
-        delete mOverRepSeqDist[seq];
+        delete[] mOverRepSeqDist[seq];
         mOverRepSeqDist[seq] = NULL;
     }
 }
