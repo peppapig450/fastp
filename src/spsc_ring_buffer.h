@@ -4,6 +4,8 @@
 #include <memory>
 #include <cassert>
 #include <cstddef>
+#include <cstdlib>
+#include <new>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -52,6 +54,30 @@ public:
     }
 
     ~SPSCRingBuffer() = default;
+
+    // Ensure allocation is properly aligned for CacheAlignedAtomic
+    auto operator new(std::size_t size) -> void* {
+        void* ptr = nullptr;
+        constexpr std::size_t alignment = alignof(CacheAlignedAtomic);
+
+    #if defined(_MSC_VER)
+        ptr = _aligned_malloc(size, alignment);
+        if (!ptr) throw std::bad_alloc;
+    #else
+        if (posix_memalign(&ptr, alignment, size) != 0) {
+            throw std::bad_alloc();
+        }
+    #endif
+        return ptr;
+    }
+
+    void operator delete(void* ptr) noexcept {
+    #if defined(_MSC_VER)
+        _aligned_free(ptr);
+    #else
+        std::free(ptr);
+    #endif
+    }
 
     // Non-copyable, non-movable
     SPSCRingBuffer(const SPSCRingBuffer&) = delete;
