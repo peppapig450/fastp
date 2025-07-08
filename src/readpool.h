@@ -4,9 +4,9 @@
 #ifndef READ_POOL_H
 #define READ_POOL_H
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string>
+#include <cstdio>
+#include <cstdlib>
+#include <atomic>
 #include "read.h"
 #include "options.h"
 #include "spsc_ring_buffer.h"
@@ -17,22 +17,24 @@ class ReadPool{
 public:
     ReadPool(Options* opt);
     ~ReadPool();
-    bool input(int tid, Read* r);
-    Read* getOne();
+    auto input(int tid, Read* r) -> bool;
+    auto getOne() -> Read*;
     void initBufferLists();
     void cleanup();
-    size_t size();
-
-private:
-	void updateFullStatus();
+    auto size() -> size_t;
 
 private:
     Options* mOptions;
+    // NOTE: This could be a vector
     SingleProducerSingleConsumerList<Read*>** mBufferLists;
-    size_t mProduced;
-    size_t mConsumed;
-    unsigned long mLimit;
-    bool mIsFull;
+    unsigned long mPerBufferLimit;      // Per-buffer limit instead of global
+
+    // These are for debugging ONLY
+    mutable atomic<size_t> mTotalProduced{0};
+    mutable atomic<size_t> mTotalConsumed{0};
+
+    // Round-robin state for getOne()
+    mutable atomic<int> mLastCheckedThread{0}; // Fair round-robin
 };
 
 #endif
