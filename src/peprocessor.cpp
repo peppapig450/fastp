@@ -685,8 +685,8 @@ bool PairEndProcessor::processPairEnd(ReadPack* leftPack, ReadPack* rightPack, T
     if(overlappedOut)
         delete overlappedOut;
 
-    delete leftPack->data;
-    delete rightPack->data;
+    delete[] leftPack->data;
+    delete[] rightPack->data;
     delete leftPack;
     delete rightPack;
 
