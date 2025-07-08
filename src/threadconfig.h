@@ -9,7 +9,7 @@
 #include "writer.h"
 #include "options.h"
 #include "filterresult.h"
-#include "singleproducersingleconsumerlist.h"
+#include "spsc_ring_buffer.h"
 
 using namespace std;
 

@@ -15,7 +15,7 @@
 #include "umiprocessor.h"
 #include "writerthread.h"
 #include "duplicate.h"
-#include "singleproducersingleconsumerlist.h"
+#include "spsc_ring_buffer.h"
 #include "readpool.h"
 
 using namespace std;

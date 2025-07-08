@@ -9,7 +9,7 @@
 #include "options.h"
 #include <atomic>
 #include <mutex>
-#include "singleproducersingleconsumerlist.h"
+#include "spsc_ring_buffer.h"
 
 using namespace std;
 
