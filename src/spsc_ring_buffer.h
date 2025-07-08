@@ -1,9 +1,9 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <memory>
 #include <cassert>
-#include <cstddef>
 #include <cstdlib>
 #include <new>
 #include <thread>
@@ -39,7 +39,7 @@ private:
     };
 
 public:
-    explicit SPSCRingBuffer(size_t capacity = 1024 * 1024)
+    explicit SPSCRingBuffer(size_t capacity = static_cast<long>(1024) * 1024)
         : capacity_(roundUpToPowerOf2(capacity))
         , mask_(capacity_ - 1)
         , buffer_(std::unique_ptr<T[]>(new T[capacity_]))
