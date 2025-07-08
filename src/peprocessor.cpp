@@ -46,7 +46,7 @@ PairEndProcessor::PairEndProcessor(Options* opt){
 }
 
 PairEndProcessor::~PairEndProcessor() {
-    delete mInsertSizeHist;
+    delete[] mInsertSizeHist;
     if(mDuplicate) {
         delete mDuplicate;
         mDuplicate = NULL;
