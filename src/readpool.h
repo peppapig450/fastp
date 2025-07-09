@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <atomic>
 #include "read.h"
+#include <memory>
+#include <vector>
 #include "options.h"
 #include "spsc_ring_buffer.h"
 
@@ -23,10 +25,16 @@ public:
     void cleanup();
     auto size() -> size_t;
 
+    // Temporary monitoring events
+    auto getTotalPressureEvents() const -> size_t;
+    void printPressureStats() const;
+    void resetPressureStats();
+
 private:
     Options* mOptions;
-    // NOTE: This could be a vector
-    SingleProducerSingleConsumerList<Read*>** mBufferLists;
+
+    std::vector<std::unique_ptr<SingleProducerSingleConsumerList<Read*>>> mBufferLists;
+   
     unsigned long mPerBufferLimit;      // Per-buffer limit instead of global
 
     // These are for debugging ONLY

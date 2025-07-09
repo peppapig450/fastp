@@ -1,7 +1,9 @@
 #include "readpool.h"
+#include "spsc_ring_buffer.h"
 #include "util.h"
 #include <atomic>
 #include <memory.h>
+#include <memory>
 #include <unistd.h>
 #include "common.h"
 
@@ -33,9 +35,11 @@ auto ReadPool::input(int tid, Read* data) -> bool {
         return true;
     }
 
-    // Slow path: buffer might be full, check size limit
-    if (mBufferLists[tid]->size() > mPerBufferLimit) {
-        return false;   // This thread's buffer is at capacity
+    // Leverage relaxed capacity checks due to improved backoff efficiency.
+    // Inputs are only rejected when usage exceeds 2 the per-buffer limit,
+    // allowing higher tolerance before dropping data.
+    if (mBufferLists[tid]->size() > mPerBufferLimit * 2) {
+        return false;   // Drop only when severely over capacity
     }
 
     // Buffer has space but might have temporary contention
@@ -46,29 +50,74 @@ auto ReadPool::input(int tid, Read* data) -> bool {
 }
 
 void ReadPool::cleanup() {
-    // NOTE: This can be switched to using RAII if mBufferLists is a vector
-    for (int tid = 0; tid < mOptions->thread; ++tid) {
-        auto* list = mBufferLists[tid];
-        while (list->canBeConsumed()) {
-            Read* r = list->consume();
-            mTotalConsumed.fetch_add(1, std::memory_order_relaxed); // Debugging
+    for (auto& buffer : mBufferLists) {
+        while (buffer->canBeConsumed()) {
+            Read *r = buffer->consume();
+            mTotalConsumed.fetch_add(1, std::memory_order_relaxed);
             delete r;
         }
-        delete list;
     }
-    delete[] mBufferLists;
-    mBufferLists = nullptr;
+    mBufferLists.clear();
 }
 
 void ReadPool::initBufferLists() {
-    mBufferLists = new SingleProducerSingleConsumerList<Read*>*[mOptions->thread];
+    // More efficient backoff means we can use larger buffers for throughput
+    mBufferLists.reserve(mOptions->thread);
 
-    for(int tid = 0; tid < mOptions->thread; tid++) {
-        static constexpr size_t kMinBufferCapacity = 2048UL;
-        size_t bufferCapacity = max(kMinBufferCapacity, mPerBufferLimit);
+    for (int tid = 0; tid < mOptions->thread; tid++) {
+        // TODO: figure out whether the 8MB default is really needed
+        static constexpr size_t kMinBufferCapacity = 4096UL;
+        size_t bufferCapacity = std::max(kMinBufferCapacity, mPerBufferLimit * 2);
 
-        mBufferLists[tid] = new SingleProducerSingleConsumerList<Read*>(bufferCapacity);
+        // use SPSCRingBuffer use its 8MiB default if our calculation is smaller
+        if (bufferCapacity < 1024 * 1024) { 
+            bufferCapacity = 0; // Use default 8MiB from SPSCRingBuffer
+        }
+
+        mBufferLists.emplace_back(
+            // Ensure unique for perfect forwarding
+            std::unique_ptr<SingleProducerSingleConsumerList<Read*>>(
+                new SingleProducerSingleConsumerList<Read*>(bufferCapacity)
+            )
+        );
     }
+}
+
+// Monitoring methods
+auto ReadPool::getTotalPressureEvents() const -> size_t {
+    size_t total = 0;
+    for (const auto& buffer : mBufferLists) {
+        total += buffer->getPressureEvents();
+    }
+    return total;
+}
+
+void ReadPool::printPressureStats() const {
+    size_t totalPressure = getTotalPressureEvents();
+    size_t totalProduced = mTotalProduced.load();
+    
+    if (totalProduced > 0) {
+        double pressureRatio = (double)totalPressure / totalProduced * 100.0;
+        printf("ReadPool Adaptive Backoff Stats:\n");
+        printf("  Pressure events: %zu / %zu (%.2f%%)\n", 
+               totalPressure, totalProduced, pressureRatio);
+        
+        if (pressureRatio > 5.0) {
+            printf("High pressure detected. Consider increasing thread count or buffer sizes.\n");
+        } else if (pressureRatio < 0.1) {
+            printf("Low pressure - adaptive backoff working well!\n");
+        } else {
+            printf("Moderate pressure - system working efficiently.\n");
+        }
+    }
+}
+
+void ReadPool::resetPressureStats() {
+    for (auto& buffer : mBufferLists) {
+        buffer->resetPressureEvents();
+    }
+    mTotalProduced.store(0);
+    mTotalConsumed.store(0);
 }
 
 auto ReadPool::size() -> size_t {
