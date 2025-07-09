@@ -9,13 +9,19 @@
 #include <thread>
 #include <type_traits>
 #include <utility>
+#include <chrono>
 
 
-template<typename T>
+template<typename ItemType>
 class SPSCRingBuffer {
 private:
     // Cache line size for avoiding false sharing
     static constexpr size_t CACHE_LINE_SIZE = 64;
+
+    // Backoff strategy parameters
+    static constexpr int MAX_SPINS = 2000;  // Max spins before sleeping
+    static constexpr int YIELD_THRESHOLD = 128;   // when to switch from pause to yield
+    static constexpr std::chrono::microseconds SLEEP_DURATION{10};
 
     // Ensure capacity is power of 2 for efficient masking
     static auto roundUpToPowerOf2(size_t n) -> size_t {
@@ -38,15 +44,59 @@ private:
         char padding[CACHE_LINE_SIZE - sizeof(std::atomic<size_t>)];
     };
 
+    void backoff(int& spin_count) {
+        backoff_impl(spin_count, [](/* nothing */){});
+    }
+
+    template <typename OnLongWaitCallback>
+    void backoff(int& spin_count, OnLongWaitCallback&& on_long_wait) {
+        backoff_impl(spin_count, std::forward<OnLongWaitCallback>(on_long_wait));
+    }
+
+    template <typename OnLongWaitCallback>
+    void backoff_impl(int& spin_count, OnLongWaitCallback&& on_long_wait) {
+        if (spin_count < YIELD_THRESHOLD) {
+            // Phase 1: architecture-specific CPU pause instructions
+            // Exponential backoff: more pauses as contention continues
+            for (int i = 0; i < (1 << (spin_count / 16)); ++i) {
+                #if defined (__x86_64__) || defined (__i386__)
+                    // x86 PAUSE instruction: hints to CPU this is a spin-wait loop
+                    // Reduces resource usage and improves hyper-threading performance
+                    __builtin_ia32_pause();
+                #elif defined (__aarch64__)
+                    // ARM64 YIELD instruction: similar to X86 PAUSE
+                    // Provides hint to CPU about spin-wait behavior
+                    asm volatile("yield" ::: "memory");
+                #else
+                    // Fallback for other architectures: use OS thread yield
+                    // Not as efficient but maintains correctness
+                    std::this_thread::yield();
+                    break; // Only yield once for unknown architectures
+                #endif
+            }
+            ++spin_count;
+        } else if (spin_count < MAX_SPINS) {
+            // Phase 2: give up time slice but stay ready for quick recovery
+            std::this_thread::yield();
+            ++spin_count;
+        } else {
+            // Phase 3: long wait detected, execute callback and sleep
+            on_long_wait();             // Execute user callback (inlined)
+            std::this_thread::sleep_for(SLEEP_DURATION); // microsecond sleep
+            spin_count = 0;             // reset cycle
+        }
+    }
+
 public:
-    explicit SPSCRingBuffer(size_t capacity = static_cast<long>(1024) * 1024)
+    explicit SPSCRingBuffer(size_t capacity = static_cast<long>(8) * 1024 * 1024)
         : capacity_(roundUpToPowerOf2(capacity))
         , mask_(capacity_ - 1)
-        , buffer_(std::unique_ptr<T[]>(new T[capacity_]))
+        , buffer_(std::unique_ptr<ItemType[]>(new ItemType[capacity_]))
         , producer_finished_{false}
-        , consumer_finished_{false} {
+        , consumer_finished_{false}
+        , pressure_events_{0} {
 
-        static_assert(std::is_trivially_move_constructible<T>::value,
+        static_assert(std::is_trivially_move_constructible<ItemType>::value,
                     "T must be trivially move-constructable");
 
         // Ensure minimum capacity
@@ -85,46 +135,38 @@ public:
     SPSCRingBuffer(SPSCRingBuffer&&) = delete;
     auto operator=(SPSCRingBuffer&&) -> SPSCRingBuffer& = delete;
 
-    // Producer interface (single thread only)
-    void produce(const T& item) {
+    // Producer interface
+    template <typename InputItem>
+    void produce(InputItem&& item) {
+        int spin_count = 0;
+ 
         // Rather than always succeeding as the original does which allocates more memory
         // we spin until we can produce (when the buffer has space)
         while (true) {
             const size_t head = head_.value.load(std::memory_order_relaxed);
             const size_t next_head = head + 1;
 
-            // Check if buffer is full
+            // Check if buffer is full (accounts for keeping 1 slot empty)
             if (next_head - tail_.value.load(std::memory_order_acquire) < capacity_) {
-                // Store the item
-                buffer_[head & mask_] = item;
+                // Store item using perfect forwarding (zero-copy when possible)
+                buffer_[head & mask_] = std::forward<InputItem>(item);
 
-                // Release the item to consumer
+                // Release the item to consumer (ensures item write happens before this)
                 head_.value.store(next_head, std::memory_order_release);
                 return;
             }
 
-            // Buffer is full, yield and retry
-            std::this_thread::yield();
+            // Buffer is full: backoff with pressure tracking
+            // Lambda captures 'this' to increment pressure counter on long waits
+            backoff(spin_count, [this]() {
+                pressure_events_.fetch_add(1, std::memory_order_relaxed);
+            });
         }
     }
 
-    void produce(T&& item) {
-        while (true) {
-            const size_t head = head_.value.load(std::memory_order_relaxed);
-            const size_t next_head = head + 1;
-
-            if (next_head - tail_.value.load(std::memory_order_acquire) < capacity_) {
-                buffer_[head & mask_] = std::move(item);
-                head_.value.store(next_head, std::memory_order_release);
-                return;
-            }
-
-            std::this_thread::yield();
-        }
-    }
-
-    // Non-blocking versions
-    auto tryProduce(const T& item) -> bool {
+    // Non-blocking version using perfect forwarding
+    template <typename InputItem>
+    auto tryProduce(InputItem&& item) -> bool {
         const size_t head = head_.value.load(std::memory_order_relaxed);
         const size_t next_head = head + 1;
 
@@ -132,13 +174,13 @@ public:
             return false;
         }
 
-        buffer_[head & mask_] = item;
+        buffer_[head & mask_] = std::forward<InputItem>(item);
         head_.value.store(next_head, std::memory_order_release);
         return true;
     }
 
     // Single thread consumer interface
-    auto tryConsume(T& item) -> bool {
+    auto tryConsume(ItemType& item) -> bool {
         const size_t tail = tail_.value.load(std::memory_order_relaxed);
 
         // Check if buffer is empty
@@ -153,19 +195,30 @@ public:
     }
 
     // Api compatible blocking consume that returns the item directly
-    auto consume() -> T {
-        const size_t tail = tail_.value.load(std::memory_order_relaxed);
+    auto consume() -> ItemType {
+        int spin_count = 0;
+        while (true) {
+            const size_t tail = tail_.value.load(std::memory_order_relaxed);
 
-        // Check if buffer is empty, this should only be called when canBeConsumed() is true
-        if (tail == head_.value.load(std::memory_order_acquire)) {
-            assert(false && "consume() called on empty buffer");
-            return T{};
+            // Check if buffer has items available
+            if (tail != head_.value.load(std::memory_order_acquire)) {
+                // Move item out of the buffer
+                ItemType item = std::move(buffer_[tail & mask_]);
+
+                // Release the slot to producer
+                tail_.value.store(tail + 1, std::memory_order_release);
+                return item;
+            }
+
+            // Buffer empty: check if producer is done
+            if (producer_finished_.load(std::memory_order_acquire)) {
+                return ItemType{}; // Return default constructed item if producer finished
+            }
+
+            // Buffer emtpy but producer still active: backoff without callback
+            // Uses zero-overhead backoff version
+            backoff(spin_count);
         }
-
-        T item = std::move(buffer_[tail & mask_]);
-
-        tail_.value.store(tail + 1, std::memory_order_release);
-        return item;
     }
 
     // Non-blocking checks
@@ -182,9 +235,7 @@ public:
     }
 
     auto empty() const -> bool {
-        const size_t tail = tail_.value.load(std::memory_order_relaxed);
-        const size_t head = head_.value.load(std::memory_order_acquire);
-        return tail == head;
+        return !canConsume();
     }
 
     auto size() const -> size_t {
@@ -219,12 +270,21 @@ public:
         return canConsume();
     }
 
+    // Monitoring and diagnostics
+    auto getPressureEvents() const -> size_t {
+        return pressure_events_.load(std::memory_order_relaxed);
+    }
+
+    void resetPressureEvents() {
+        pressure_events_.store(0, std::memory_order_relaxed);
+    }
+
 private:
     const size_t capacity_;
     const size_t mask_;
 
     // Buffer storage
-    std::unique_ptr<T[]> buffer_;
+    std::unique_ptr<ItemType[]> buffer_;
 
     // Producer-owned cache line
     alignas(CACHE_LINE_SIZE) CacheAlignedAtomic head_;
@@ -235,8 +295,15 @@ private:
     // Status flags
     alignas(CACHE_LINE_SIZE) std::atomic<bool> producer_finished_;
     std::atomic<bool> consumer_finished_;
+
+    // Performance monitoring
+    mutable std::atomic<size_t> pressure_events_;
 };
 
 // Convenience alias
 template<typename T>
 using SingleProducerSingleConsumerList = SPSCRingBuffer<T>;
+
+// Define the static constexpr member
+template <typename ItemType>
+constexpr std::chrono::microseconds SPSCRingBuffer<ItemType>::SLEEP_DURATION;
