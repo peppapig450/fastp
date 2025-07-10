@@ -1,10 +1,13 @@
 #include "seprocessor.h"
 #include "fastqreader.h"
+#include <chrono>
 #include <iostream>
+#include <string>
 #include <unistd.h>
 #include <functional>
 #include <thread>
 #include <memory.h>
+#include "read.h"
 #include "util.h"
 #include "jsonreporter.h"
 #include "htmlreporter.h"
@@ -192,6 +195,10 @@ bool SingleEndProcessor::process(){
 }
 
 void SingleEndProcessor::recycleToPool(int tid, Read* r) {
+    if (r == nullptr) {
+        return;
+    }
+
     // failed to recycle, then delete it
     if(!mReadPool->input(tid, r))
         delete r;
@@ -422,24 +429,41 @@ void SingleEndProcessor::readerTask()
 void SingleEndProcessor::processorTask(ThreadConfig* config)
 {
     SingleProducerSingleConsumerList<ReadPack*>* input = config->getLeftInput();
+
+    int consecutiveEmptyAttempts = 0;
+    const int MAX_EMPTY_ATTEMPTS = 100;
+    
     while(true) {
         if(config->canBeStopped()){
             break;
         }
-        while(input->canBeConsumed()) {
-            ReadPack* data = input->consume();
-            processSingleEnd(data, config);
+
+        ReadPack* pack = nullptr;
+
+        // Try non-blocking consume
+        if (input->tryConsume(pack)) {
+            processSingleEnd(pack, config);
+            consecutiveEmptyAttempts = 0;
+            continue;
         }
-        if(input->isProducerFinished()) {
-            if(!input->canBeConsumed()) {
-                if(mOptions->verbose) {
-                    string msg = "thread " + to_string(config->getThreadId() + 1) + " data processing completed";
-                    loginfo(msg);
-                }
-                break;
+
+        // Check if we're done
+        if (input->isProducerFinished() && !input->canBeConsumed()) {
+            if (mOptions->verbose) {
+                string msg = "thread " + to_string(config->getThreadId() + 1) + " data processing completed";
+                loginfo(msg);
             }
+            break;
+        }
+
+        // No data available, sleep briefly to avoid excessive CPU usage
+        consecutiveEmptyAttempts++;
+        if (consecutiveEmptyAttempts > MAX_EMPTY_ATTEMPTS) {
+            // Long wait - sleep more
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
         } else {
-            usleep(100);
+            // Short wait
+            std::this_thread::sleep_for(std::chrono::microseconds(10));
         }
     }
     input->setConsumerFinished();        
@@ -455,6 +479,9 @@ void SingleEndProcessor::processorTask(ThreadConfig* config)
     if(mOptions->verbose) {
         string msg = "thread " + to_string(config->getThreadId() + 1) + " finished";
         loginfo(msg);
+
+        loginfo("Read pool statistics:");
+        mReadPool->printPressureStats();
     }
 }
 
