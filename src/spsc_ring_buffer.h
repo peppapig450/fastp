@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <cassert>
 #include <cstdlib>
@@ -191,6 +192,29 @@ public:
         // Load item and release slot to producer
         item = std::move(buffer_[tail & mask_]);
         tail_.value.store(tail +  1, std::memory_order_release);
+        return true;
+    }
+
+    // Overload of tryConsume for pointer types
+    // This version is needed for processor task that work directly with pointer types.
+    // It avoids ambiguity with the general tryConsume(ItemType&), improves readability,
+    // and ensures the buffer contents are correctly moved into the caller's pointer.
+    //
+    // Enabled only when ItemType is a pointer type.
+    template <typename PointerItemType = ItemType>
+    auto tryConsume(ItemType*& item) -> typename std::enable_if<std::is_pointer<PointerItemType>::value, bool>::type {
+        const size_t tail = tail_.value.load(std::memory_order_relaxed);
+
+        // Check if buffer is empty
+        if (tail == head_.value.load(std::memory_order_acquire)) {
+            item = nullptr;
+            return false;
+        }
+
+        // For pointer types this needs to be handled differently
+        // Since we're storing pointers, we can just move the pointer
+        item = std::move(buffer_[tail & mask_]);
+        tail_.value.store(tail + 1, std::memory_order_release);
         return true;
     }
 
