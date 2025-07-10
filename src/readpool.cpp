@@ -1,7 +1,9 @@
 #include "readpool.h"
 #include "spsc_ring_buffer.h"
 #include "util.h"
+#include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <memory.h>
 #include <memory>
 #include <unistd.h>
@@ -27,7 +29,11 @@ ReadPool::~ReadPool() {
 }
 
 auto ReadPool::input(int tid, Read* data) -> bool {
-    // Fast path: try non-blocking produce first
+    if (data == nullptr) { // nothing to recycle
+        return true;
+    }
+
+    // try non-blocking produce first
     // This is the most common case and avoids size() calculation
     if (mBufferLists[tid]->tryProduce(data)) {
         // This is for debugging ONLY
@@ -35,18 +41,8 @@ auto ReadPool::input(int tid, Read* data) -> bool {
         return true;
     }
 
-    // Leverage relaxed capacity checks due to improved backoff efficiency.
-    // Inputs are only rejected when usage exceeds 2 the per-buffer limit,
-    // allowing higher tolerance before dropping data.
-    if (mBufferLists[tid]->size() > mPerBufferLimit * 2) {
-        return false;   // Drop only when severely over capacity
-    }
-
-    // Buffer has space but might have temporary contention
-    // Use blocking produce (spins briefly if needed)
-    mBufferLists[tid]->produce(data);
-    mTotalProduced.fetch_add(1, std::memory_order_relaxed); // Also for debug 
-    return true;
+    // Pool is full, caller should delete the read
+    return false;
 }
 
 void ReadPool::cleanup() {
@@ -65,14 +61,9 @@ void ReadPool::initBufferLists() {
     mBufferLists.reserve(mOptions->thread);
 
     for (int tid = 0; tid < mOptions->thread; tid++) {
-        // TODO: figure out whether the 8MB default is really needed
-        static constexpr size_t kMinBufferCapacity = 4096UL;
-        size_t bufferCapacity = std::max(kMinBufferCapacity, mPerBufferLimit * 2);
-
-        // use SPSCRingBuffer use its 8MiB default if our calculation is smaller
-        if (bufferCapacity < 1024 * 1024) { 
-            bufferCapacity = 0; // Use default 8MiB from SPSCRingBuffer
-        }
+        // This buffer size balanced memory usage and recycling efficiency
+        static constexpr size_t kDefaultBufferCapacity = 4UL * 1024 * 1024; // 4M reads per buffer
+        size_t bufferCapacity = std::max(kDefaultBufferCapacity, mPerBufferLimit * 2);
 
         mBufferLists.emplace_back(
             // Ensure unique for perfect forwarding
@@ -95,19 +86,25 @@ auto ReadPool::getTotalPressureEvents() const -> size_t {
 void ReadPool::printPressureStats() const {
     size_t totalPressure = getTotalPressureEvents();
     size_t totalProduced = mTotalProduced.load();
+    size_t totalFailed = 0;
+
+    // Calculate how many reads couldn't be recycled
+    for (int tid = 0; tid < mOptions->thread; tid++) {
+        size_t bufferSize = mBufferLists[tid]->size();
+        if (bufferSize >= mBufferLists[tid]->capacity()) {
+            totalFailed++; // Approximate failed recycles
+        }
+    }
     
     if (totalProduced > 0) {
-        double pressureRatio = (double)totalPressure / totalProduced * 100.0;
-        printf("ReadPool Adaptive Backoff Stats:\n");
+        double pressureRatio = static_cast<double>(totalPressure) / totalProduced * 100.0;
+        printf("ReadPool Stats:\n");
+        printf("  Total recycled: %zu\n", totalProduced);
         printf("  Pressure events: %zu / %zu (%.2f%%)\n", 
                totalPressure, totalProduced, pressureRatio);
         
         if (pressureRatio > 5.0) {
-            printf("High pressure detected. Consider increasing thread count or buffer sizes.\n");
-        } else if (pressureRatio < 0.1) {
-            printf("Low pressure - adaptive backoff working well!\n");
-        } else {
-            printf("Moderate pressure - system working efficiently.\n");
+            printf("  Note: High pressure detected. Some reads may not be recycled.\n");
         }
     }
 }
@@ -130,31 +127,16 @@ auto ReadPool::size() -> size_t {
 }
 
 auto ReadPool::getOne() -> Read* {
-    // Cache-friendly round-robin biased towards recently active threads
+    // Simple round-robin through all buffers
     int startThread = mLastCheckedThread.load(std::memory_order_relaxed);
 
-    // First pass: check recently active threads (likely to have data)
-    for (int i = 0; i < min(4, mOptions->thread); i++) {
+    for (int i = 0; i < mOptions->thread; i++) {
         int tid = (startThread + i) % mOptions->thread;
 
-        if (mBufferLists[tid]->canBeConsumed()) {
-            Read* r = mBufferLists[tid]->consume();
+        Read* r = nullptr;
+        if (mBufferLists[tid]->tryConsume(r)) {
             mLastCheckedThread.store((tid + 1) % mOptions->thread, std::memory_order_relaxed);
-
-            // Debug
             mTotalConsumed.fetch_add(1, std::memory_order_relaxed);
-            return r;
-        }
-    }
-
-    // Second pass: check all remaining threads
-    for (int i = 4; i < mOptions->thread; i++) {
-        int tid = (startThread + i) % mOptions->thread;
-
-        if (mBufferLists[tid]->canBeConsumed()) {
-            Read* r = mBufferLists[tid]->consume();
-            mLastCheckedThread.store((tid+ 1) % mOptions->thread, std::memory_order_relaxed);
-            mTotalConsumed.fetch_add(1, std::memory_order_relaxed); // for debug only
             return r;
         }
     }
