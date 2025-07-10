@@ -1,10 +1,12 @@
 #include "peprocessor.h"
 #include "fastqreader.h"
+#include <chrono>
 #include <iostream>
 #include <unistd.h>
 #include <functional>
 #include <thread>
 #include <memory.h>
+#include "read.h"
 #include "util.h"
 #include "adaptertrimmer.h"
 #include "basecorrector.h"
@@ -347,15 +349,25 @@ int PairEndProcessor::getPeakInsertSize() {
 }
 
 void PairEndProcessor::recycleToPool1(int tid, Read* r) {
-    // failed to recycle, then delete it
-    if(!mLeftReadPool->input(tid, r))
+    if (r == nullptr) {
+        return;
+    }
+
+    // Try to recycle, if pool is full just delete
+    if (!mLeftReadPool->input(tid, r)) {
         delete r;
+    }
 }
 
 void PairEndProcessor::recycleToPool2(int tid, Read* r) {
+    if (r == nullptr) {
+        return;
+    }
+
     // failed to recycle, then delete it
-    if(!mRightReadPool->input(tid, r))
+    if(!mRightReadPool->input(tid, r)) {
         delete r;
+    }
 }
 
 bool PairEndProcessor::processPairEnd(ReadPack* leftPack, ReadPack* rightPack, ThreadConfig* config){
@@ -991,23 +1003,98 @@ void PairEndProcessor::processorTask(ThreadConfig* config)
 {
     SingleProducerSingleConsumerList<ReadPack*>* inputLeft = config->getLeftInput();
     SingleProducerSingleConsumerList<ReadPack*>* inputRight = config->getRightInput();
+
+    int consecutiveEmptyAttempts = 0;
+    const int MAX_EMPTY_ATTEMPTS = 100; // Avoid excessive sharing 
+
     while(true) {
         if(config->canBeStopped()){
             break;
         }
-        while(inputLeft->canBeConsumed() && inputRight->canBeConsumed()) {
-            ReadPack* dataLeft = inputLeft->consume();
-            ReadPack* dataRight = inputRight->consume();
-            processPairEnd(dataLeft, dataRight, config);
+
+        ReadPack* leftPack = nullptr;
+        ReadPack* rightPack = nullptr;
+
+        // Try non-blocking consume from both queues
+        bool gotLeft = false;
+        bool gotRight = false;
+
+        // Check if we can consume from both before actually consuming
+        if (inputLeft->canBeConsumed() && inputRight->canBeConsumed()) {
+            // Try to get both packs
+            gotLeft = inputLeft->tryConsume(leftPack);
+            gotRight = inputRight->tryConsume(rightPack);
+
+            if (gotLeft && gotRight && leftPack != nullptr && rightPack != nullptr) {
+                // Success - process the pair
+                processPairEnd(leftPack, rightPack, config);
+                consecutiveEmptyAttempts = 0;
+                continue;
+            }
+
+            // If we only got one put it back in and try again
+            if (leftPack != nullptr && rightPack == nullptr) {
+                // Put left back in since we don't have right
+                if (!inputLeft->tryProduce(leftPack)) {
+                    // If we can't put it back, just process with empty right
+                    ReadPack emptyPack;
+                    emptyPack.count = 0;
+                    emptyPack.data = nullptr;
+                    processPairEnd(leftPack, &emptyPack, config);
+                }
+            } else if (rightPack != nullptr && leftPack == nullptr) {
+                // Put right back in since we don't have left
+                if (!inputRight->tryProduce(rightPack)) {
+                    // If we cannot put it back in, just process with empty left
+                    ReadPack emptyPack;
+                    emptyPack.count = 0;
+                    emptyPack.data = nullptr;
+                    processPairEnd(&emptyPack, rightPack, config);
+                }
+            }
         }
-        if(inputLeft->isProducerFinished() && !inputLeft->canBeConsumed()) {
+
+        // Check if we're done
+        bool leftDone = inputLeft->isProducerFinished() && !inputLeft->canBeConsumed();
+        bool rightDone = inputRight->isProducerFinished() && !inputRight->canBeConsumed();
+
+        if (leftDone || rightDone) {
+            // Process any remaining data before exiting
+            if (leftDone && rightDone) {
+                // Left is done, consume remaining right data with empty left
+                while (inputRight->canBeConsumed()) {
+                    if (inputRight->tryConsume(rightPack)) {
+                        ReadPack emptyPack;
+                        emptyPack.count = 0;
+                        emptyPack.data = nullptr;
+                        processPairEnd(&emptyPack, rightPack, config);
+                    }
+                }
+            } else if (rightDone && !leftDone) {
+                // Right is done, consume remaining left data with empty right
+                while (inputLeft->canBeConsumed()) {
+                    if (inputLeft->tryConsume(leftPack)) {
+                        ReadPack emptyPack;
+                        emptyPack.count = 0;
+                        emptyPack.data = nullptr;
+                        processPairEnd(leftPack, &emptyPack, config);
+                    }
+                }
+            }
             break;
-        } else if(inputRight->isProducerFinished() && !inputRight->canBeConsumed()) {
-            break;
+        }
+
+        // No data available, sleep briefly to avoid excessive CPU usage
+        consecutiveEmptyAttempts++;
+        if (consecutiveEmptyAttempts > MAX_EMPTY_ATTEMPTS) {
+            // Long wait - sleep more
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
         } else {
-            usleep(100);
+            // Short wait
+            std::this_thread::sleep_for(std::chrono::microseconds(10));
         }
     }
+
     inputLeft->setConsumerFinished();
     inputRight->setConsumerFinished();
 
@@ -1032,6 +1119,13 @@ void PairEndProcessor::processorTask(ThreadConfig* config)
             mFailedWriter->setInputCompleted();
         if(mOverlappedWriter)
             mOverlappedWriter->setInputCompleted();
+
+        if (mOptions->verbose) {
+            loginfo("Left read pool statistics:");
+            mLeftReadPool->printPressureStats();
+            loginfo("Right read pool statistics:");
+            mRightReadPool->printPressureStats();
+        }
     }
     
     if(mOptions->verbose) {
