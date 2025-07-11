@@ -1,4 +1,6 @@
 #include "matcher.h"
+#include <algorithm>
+#include <vector>
 
 Matcher::Matcher(){
 }
@@ -9,8 +11,8 @@ Matcher::~Matcher(){
 
 bool Matcher::matchWithOneInsertion(const char* insData, const char* normalData, int cmplen, int diffLimit) {
     // accumlated mismatches from left/right
-    int accMismatchFromLeft[cmplen];
-    int accMismatchFromRight[cmplen];
+    std::vector<int> accMismatchFromLeft(cmplen, 0);
+    std::vector<int> accMismatchFromRight(cmplen, 0);
 
     // accMismatchFromLeft[0]: head vs. head
     // accMismatchFromRight[cmplen-1]: tail vs. tail
@@ -55,8 +57,8 @@ bool Matcher::matchWithOneInsertion(const char* insData, const char* normalData,
 
 int Matcher::diffWithOneInsertion(const char* insData, const char* normalData, int cmplen, int diffLimit) {
     // accumlated mismatches from left/right
-    int accMismatchFromLeft[cmplen];
-    int accMismatchFromRight[cmplen];
+    std::vector<int> accMismatchFromLeft(cmplen, 0);
+    std::vector<int> accMismatchFromRight(cmplen, 0);
 
     // accMismatchFromLeft[0]: head vs. head
     // accMismatchFromRight[cmplen-1]: tail vs. tail
@@ -93,8 +95,7 @@ int Matcher::diffWithOneInsertion(const char* insData, const char* normalData, i
         if(accMismatchFromLeft[i-1] + accMismatchFromRight[cmplen-1]> diffLimit)
             return -1; // -1 means higher than diffLimit
         int diff = accMismatchFromLeft[i-1] + accMismatchFromRight[i];
-        if(diff <= minDiff)
-            minDiff = diff;
+        minDiff = std::min(diff, minDiff);
     }
 
     return minDiff;
