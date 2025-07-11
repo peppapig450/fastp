@@ -100,6 +100,12 @@ OverlapResult OverlapAnalysis::analyze(string*  r1, string*  r2, int diffLimit, 
             overlap_len = min(len1 - offset, len2);
             int overlapDiffLimit = min(diffLimit, (int)(overlap_len * diffPercentLimit));
 
+            // Ensure the overlap length is valid
+            if (overlap_len <= 1 || offset >= len1) {
+                offset += 1;
+                continue;
+            }
+
             int diff = Matcher::diffWithOneInsertion(str1 + offset, str2, overlap_len-1, overlapDiffLimit);
             if(diff <0 || diff > overlapDiffLimit)
                 diff = Matcher::diffWithOneInsertion(str2, str1 + offset, overlap_len-1, overlapDiffLimit);
@@ -124,9 +130,18 @@ OverlapResult OverlapAnalysis::analyze(string*  r1, string*  r2, int diffLimit, 
             overlap_len = min(len1,  len2- abs(offset));
             int overlapDiffLimit = min(diffLimit, (int)(overlap_len * diffPercentLimit));
 
-            int diff = Matcher::diffWithOneInsertion(str1, str2-offset, overlap_len-1, overlapDiffLimit);
+            // Ensure we have a valid overlap length and don't exceed bounds
+            if (overlap_len <= 1 || std::abs(offset) >= len2) {
+                offset -= 1;
+                continue;
+            }
+
+            // Ensure we do not go beyond string bounds
+            const char* shifted_str2 = str2 + std::abs(offset);
+
+            int diff = Matcher::diffWithOneInsertion(str1, shifted_str2, overlap_len-1, overlapDiffLimit);
             if(diff <0 || diff > overlapDiffLimit)
-                diff = Matcher::diffWithOneInsertion(str2-offset, str1, overlap_len-1, overlapDiffLimit);
+                diff = Matcher::diffWithOneInsertion(shifted_str2, str1, overlap_len-1, overlapDiffLimit);
             
             if (diff <= overlapDiffLimit && diff >=0){
                 OverlapResult ov;
