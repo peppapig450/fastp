@@ -1,6 +1,7 @@
 #include "peprocessor.h"
 #include "fastqreader.h"
 #include <chrono>
+#include <cstddef>
 #include <iostream>
 #include <unistd.h>
 #include <functional>
@@ -52,6 +53,14 @@ PairEndProcessor::~PairEndProcessor() {
     if(mDuplicate) {
         delete mDuplicate;
         mDuplicate = NULL;
+    }
+    if (mFilter != nullptr) {
+        delete mFilter;
+        mFilter = nullptr;
+    }
+    if (mUmiProcessor != nullptr) {
+        delete mUmiProcessor;
+        mUmiProcessor = nullptr;
     }
     if(mLeftReadPool) {
         delete mLeftReadPool;
