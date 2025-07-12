@@ -1,102 +1,205 @@
 #include "matcher.h"
+
 #include <algorithm>
-#include <vector>
+#include <limits>
+#include <iostream>
 
-Matcher::Matcher(){
+// Call the internal implementation using a lambda function.
+//
+// The lambda captures the parameters by value (`[=]`) and will be passed two temporary
+// buffers (allocated by `allocateAndExecute`) for tracking mismatches.
+// This keeps memory management separate from the algorithm logic.
+auto Matcher::matchWithOneInsertion(const char *insertionData, const char *normalData, int compareLength, int diffLimit)
+    -> bool {
+    return allocateAndExecute<bool>(compareLength, [=](int *leftMismatches, int *rightMismatches) {
+        return matchWithOneInsertionImpl(insertionData, normalData, compareLength, diffLimit, leftMismatches,
+                                         rightMismatches);
+    });
 }
 
-
-Matcher::~Matcher(){
+// Same pattern as above: pass a lambda to abstract allocation.
+//
+// The lambda captures the parameters and returns the actual difference count
+// from the internal implementation.
+auto Matcher::diffWithOneInsertion(const char *insertionData, const char *normalData, int compareLength, int diffLimit)
+    -> int {
+    return allocateAndExecute<int>(compareLength, [=](int *leftMismatches, int *rightMismatches) {
+        return diffWithOneInsertionImpl(insertionData, normalData, compareLength, diffLimit, leftMismatches,
+                                        rightMismatches);
+    });
 }
 
-bool Matcher::matchWithOneInsertion(const char* insData, const char* normalData, int cmplen, int diffLimit) {
-    // accumlated mismatches from left/right
-    std::vector<int> accMismatchFromLeft(cmplen, 0);
-    std::vector<int> accMismatchFromRight(cmplen, 0);
+// TODO: the loops here can be vectorized, either with IVDEP auto-vectorization or SIMD intrinsics
 
-    // accMismatchFromLeft[0]: head vs. head
-    // accMismatchFromRight[cmplen-1]: tail vs. tail
-    accMismatchFromLeft[0] = insData[0] == normalData[0] ? 0 : 1;
-    accMismatchFromRight[cmplen-1] = insData[cmplen] == normalData[cmplen-1] ? 0 : 1;
-    for(int i=1; i<cmplen; i++) {
-        if(insData[i] != normalData[i])
-            accMismatchFromLeft[i] = accMismatchFromLeft[i-1]+1;
-        else
-            accMismatchFromLeft[i] = accMismatchFromLeft[i-1];
-        
-        if(accMismatchFromLeft[i] + accMismatchFromRight[cmplen-1] >diffLimit)
-            break;
-    }
-    for(int i=cmplen - 2; i>=0; i--) {
-        if(insData[i+1] != normalData[i])
-            accMismatchFromRight[i] = accMismatchFromRight[i+1]+1;
-        else
-            accMismatchFromRight[i] = accMismatchFromRight[i+1];
-        if(accMismatchFromRight[i] + accMismatchFromLeft[0]> diffLimit) {
-            for(int p=0; p<i; p++)
-                accMismatchFromRight[p] = diffLimit+1;
+// Internal implementation of matchWithOneInsertion.
+//
+// Computes whether the two sequences differ by at most `diffLimit` mismatches.
+// *assuming exactly one insertion* has occurred in `insertionData`.
+auto Matcher::matchWithOneInsertionImpl(const char *insertionData, const char *normalData, int compareLength,
+                                        int diffLimit, int *leftMismatches, int *rightMismatches) -> bool {
+    // Step 1: Initialize the mismatch buffers at the sequence boundaries.
+    // leftMismatches[0] checks the first characters; rightMismatches[end] checks the last ones.
+    //
+    // The access insertionData[compareLength] is safe: it points to the extra character assumed
+    // to be inserted in `insertionData`, making its length `compareLength + 1`.
+    leftMismatches[0] = (insertionData[0] == normalData[0]) ? 0 : 1;
+
+    // This index access is safe because `allocateAndExecute` throws if `compareLength` is equal to or less than 0
+    rightMismatches[compareLength - 1] = (insertionData[compareLength] == normalData[compareLength - 1]) ? 0 : 1;
+
+    // Step 2: Forward pass — accumulate mismatches from left to right.
+    //
+    // leftMismatches[i] contains the total number of mismatches between
+    // insertionData[0..i] and normalData[0..i].
+    for (int i = 1; i < compareLength; ++i) {
+        leftMismatches[i] = leftMismatches[i - 1];
+        if (insertionData[i] != normalData[i]) {
+            ++leftMismatches[i];
+        }
+
+        // Early exit: if the total mismatches (so far + final tail mismatch)
+        // exceed the allowed limit, we can skip further checking.
+        if (leftMismatches[i] + rightMismatches[compareLength - 1] > diffLimit) {
             break;
         }
     }
 
-    //    insData:     XXXXXXXXXXXXXXXXXXXXXXX[i]XXXXXXXXXXXXXXXXXXXXXXXX
-    // normalData:     YYYYYYYYYYYYYYYYYYYYYYY   YYYYYYYYYYYYYYYYYYYYYYYY
-    //       diff:    accMismatchFromLeft[i-1] + accMismatchFromRight[i]
+    // Step 3: Backward pass — accumulate mismatches from right to left.
+    //
+    // rightMismatches[i] stores mismatches from insertionData[i+1..end] and normalData[i..end-1].
+    for (int i = compareLength - 2; i >= 0; --i) {
+        rightMismatches[i] = rightMismatches[i + 1];
+        if (insertionData[i + 1] != normalData[i]) {
+            ++rightMismatches[i];
+        }
 
-    // insertion can be from pos = 1 to cmplen - 1
-    for(int i=1; i<cmplen; i++) {
-        if(accMismatchFromLeft[i-1] + accMismatchFromRight[cmplen-1]> diffLimit)
-            return false;
-        int diff = accMismatchFromLeft[i-1] + accMismatchFromRight[i];
-        if(diff <= diffLimit)
+        // If we exceed the diff limit during the backward pass, we propagate a high value
+        // to prevent false positives during insertion point evaluation.
+        if (rightMismatches[i] + leftMismatches[0] > diffLimit) {
+            for (int rmIdx = 0; rmIdx < i; ++rmIdx) {
+                rightMismatches[rmIdx] = diffLimit + 1;
+            }
+            break;
+        }
+    }
+
+    // Inside the loop this is repeatedly calculated despite not changing, so we hoist it
+    // outside for optimization.
+    const auto tailMismatch = rightMismatches[compareLength - 1];
+
+    // Check if we can possibly succeed before we enter the loop
+    if (leftMismatches[0] + tailMismatch > diffLimit) {
+        return false;
+    }
+
+    // Step 4: Evaluate all valid insertion points.
+    //
+    // At each index `i`, we check whether the prefix (up to i-1) and the suffix (from i)
+    // match within the allowed mismatch budget. If so, return true.
+    for (int i = 1; i < compareLength; ++i) {
+        const auto totalDifferences = leftMismatches[i - 1] + rightMismatches[i];
+        if (totalDifferences <= diffLimit) {
             return true;
+        }
+
+        // Check if subsequent iterations can possibly succeed
+        if (i < compareLength -1 && leftMismatches[i] + tailMismatch > diffLimit) {
+            return false;
+        }
     }
 
     return false;
 }
 
-int Matcher::diffWithOneInsertion(const char* insData, const char* normalData, int cmplen, int diffLimit) {
-    // accumlated mismatches from left/right
-    std::vector<int> accMismatchFromLeft(cmplen, 0);
-    std::vector<int> accMismatchFromRight(cmplen, 0);
+// Internal implementation of diffWithOneInsertion.
+//
+// Computes the *minimum number of mismatches* between the two sequences
+// assuming exactly one insertion in `insertionData`, up to a maximum of `diffLimit`.
+//
+// Returns:
+// - The minimum number of mismatches found (0 to diffLimit)
+// - -1 if no valid insertion point meets the mismatch threshold
+auto Matcher::diffWithOneInsertionImpl(const char *insertionData, const char *normalData, int compareLength,
+                                       int diffLimit, int *leftMismatches, int *rightMismatches) -> int {
+    // Reuse the same forward and backward mismatch accumulation strategy.
+    leftMismatches[0] = (insertionData[0] == normalData[0]) ? 0 : 1;
+    rightMismatches[compareLength - 1] = (insertionData[compareLength] == normalData[compareLength - 1]) ? 0 : 1;
 
-    // accMismatchFromLeft[0]: head vs. head
-    // accMismatchFromRight[cmplen-1]: tail vs. tail
-    accMismatchFromLeft[0] = insData[0] == normalData[0] ? 0 : 1;
-    accMismatchFromRight[cmplen-1] = insData[cmplen] == normalData[cmplen-1] ? 0 : 1;
-    for(int i=1; i<cmplen; i++) {
-        if(insData[i] != normalData[i])
-            accMismatchFromLeft[i] = accMismatchFromLeft[i-1]+1;
-        else
-            accMismatchFromLeft[i] = accMismatchFromLeft[i-1];
-        
-        if(accMismatchFromLeft[i] + accMismatchFromRight[cmplen-1] >diffLimit)
-            break;
-    }
-    for(int i=cmplen - 2; i>=0; i--) {
-        if(insData[i+1] != normalData[i])
-            accMismatchFromRight[i] = accMismatchFromRight[i+1]+1;
-        else
-            accMismatchFromRight[i] = accMismatchFromRight[i+1];
-        if(accMismatchFromRight[i] + accMismatchFromLeft[0]> diffLimit) {
-            for(int p=0; p<i; p++)
-                accMismatchFromRight[p] = diffLimit+1;
+    for (int i = 1; i < compareLength; ++i) {
+        leftMismatches[i] = leftMismatches[i - 1];
+        if (insertionData[i] != normalData[i]) {
+            ++leftMismatches[i];
+        }
+
+        if (leftMismatches[i] + rightMismatches[compareLength - 1] > diffLimit) {
             break;
         }
     }
 
-    //    insData:     XXXXXXXXXXXXXXXXXXXXXXX[i]XXXXXXXXXXXXXXXXXXXXXXXX
-    // normalData:     YYYYYYYYYYYYYYYYYYYYYYY   YYYYYYYYYYYYYYYYYYYYYYYY
-    //       diff:    accMismatchFromLeft[i-1] + accMismatchFromRight[i]
+    for (int i = compareLength - 2; i >= 0; --i) {
+        rightMismatches[i] = rightMismatches[i + 1];
+        if (insertionData[i + 1] != normalData[i]) {
+            ++rightMismatches[i];
+        }
 
-    int minDiff = 100000000;
-    // insertion can be from pos = 1 to cmplen - 1
-    for(int i=1; i<cmplen; i++) {
-        if(accMismatchFromLeft[i-1] + accMismatchFromRight[cmplen-1]> diffLimit)
-            return -1; // -1 means higher than diffLimit
-        int diff = accMismatchFromLeft[i-1] + accMismatchFromRight[i];
-        minDiff = std::min(diff, minDiff);
+        if (rightMismatches[i] + leftMismatches[0] > diffLimit) {
+            for (int rmIdx = 0; rmIdx < i; ++rmIdx) {
+                rightMismatches[rmIdx] = diffLimit + 1;
+            }
+            break;
+        }
     }
 
-    return minDiff;
+    // Find minumum difference across all insertion positions
+    int minimumDifference = std::numeric_limits<int>::max();
+
+    for (int i = 1; i < compareLength; ++i) {
+        if (leftMismatches[i - 1] + rightMismatches[compareLength - 1] > diffLimit) {
+            return -1;  // Indicates difference exceeds limit
+        }
+
+        const auto totalDifferences = leftMismatches[i - 1] + rightMismatches[i];
+        minimumDifference = std::min(minimumDifference, totalDifferences);
+    }
+
+    return minimumDifference;
+}
+
+bool Matcher::test() {
+    const char* normal = "ACGTAC";
+    const char* withIns = "ACGTTAC"; // insert T in the middle
+
+    if(!matchWithOneInsertion(withIns, normal, 6, 1)) {
+        std::cerr << "matchWithOneInsertion failed for insertion case" << std::endl;
+        return false;
+    }
+    int diff = diffWithOneInsertion(withIns, normal, 6, 1);
+    if(diff != 0) {
+        std::cerr << "diffWithOneInsertion expected 0 but got " << diff << " for insertion case" << std::endl;
+        return false;
+    }
+
+    const char* withMismatch = "ACGTTAG"; // one mismatch after insertion
+    if(!matchWithOneInsertion(withMismatch, normal, 6, 1)) {
+        std::cerr << "matchWithOneInsertion failed for mismatch case" << std::endl;
+        return false;
+    }
+    diff = diffWithOneInsertion(withMismatch, normal, 6, 2);
+    if(diff != 1) {
+        std::cerr << "diffWithOneInsertion expected 1 but got " << diff << " for mismatch case" << std::endl;
+        return false;
+    }
+
+    // should fail when mismatch exceeds allowed limit
+    if(matchWithOneInsertion(withMismatch, normal, 6, 0)) {
+        std::cerr << "matchWithOneInsertion unexpectedly succeeded when diffLimit=0" << std::endl;
+        return false;
+    }
+    diff = diffWithOneInsertion(withMismatch, normal, 6, 0);
+    if(diff != -1) {
+        std::cerr << "diffWithOneInsertion expected -1 but got " << diff << " when diffLimit=0" << std::endl;
+        return false;
+    }
+
+    return true;
 }
