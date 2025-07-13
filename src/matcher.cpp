@@ -1,12 +1,12 @@
 #include "matcher.h"
 
 #include <algorithm>
-#include <limits>
 #include <iostream>
+#include <limits>
 
 // Conditionally enable macros for compiler hints related to branch prediction
 #ifndef LIKELY_BRANCH
-    #if defined (__GNUC__) || defined (__clang__) || defined (__INTEL_COMPILER) || defined (__INTEL_LLVM_COMPILER)
+    #if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER) || defined(__INTEL_LLVM_COMPILER)
         // Hint to the compiler that the condition is likely true (used for branch prediction)
         #define LIKELY_BRANCH(x) __builtin_expect(!!(x), 1)
 
@@ -19,7 +19,6 @@
     #endif
 #endif
 
-
 // Call the internal implementation using a lambda function.
 //
 // The lambda captures the parameters by value (`[=]`) and will be passed two temporary
@@ -28,8 +27,8 @@
 auto Matcher::matchWithOneInsertion(const char *insertionData, const char *normalData, int compareLength, int diffLimit)
     -> bool {
     return allocateAndExecute<bool>(compareLength, [=](int *leftMismatches, int *rightMismatches) {
-        return matchWithOneInsertionImpl(insertionData, normalData, compareLength, diffLimit, leftMismatches,
-                                         rightMismatches);
+        return matchWithOneInsertionImpl(
+            insertionData, normalData, compareLength, diffLimit, leftMismatches, rightMismatches);
     });
 }
 
@@ -40,8 +39,8 @@ auto Matcher::matchWithOneInsertion(const char *insertionData, const char *norma
 auto Matcher::diffWithOneInsertion(const char *insertionData, const char *normalData, int compareLength, int diffLimit)
     -> int {
     return allocateAndExecute<int>(compareLength, [=](int *leftMismatches, int *rightMismatches) {
-        return diffWithOneInsertionImpl(insertionData, normalData, compareLength, diffLimit, leftMismatches,
-                                        rightMismatches);
+        return diffWithOneInsertionImpl(
+            insertionData, normalData, compareLength, diffLimit, leftMismatches, rightMismatches);
     });
 }
 
@@ -51,8 +50,12 @@ auto Matcher::diffWithOneInsertion(const char *insertionData, const char *normal
 //
 // Computes whether the two sequences differ by at most `diffLimit` mismatches.
 // *assuming exactly one insertion* has occurred in `insertionData`.
-auto Matcher::matchWithOneInsertionImpl(const char *insertionData, const char *normalData, int compareLength,
-                                        int diffLimit, int *leftMismatches, int *rightMismatches) -> bool {
+auto Matcher::matchWithOneInsertionImpl(const char *insertionData,
+                                        const char *normalData,
+                                        int compareLength,
+                                        int diffLimit,
+                                        int *leftMismatches,
+                                        int *rightMismatches) -> bool {
     // Step 1: Initialize the mismatch buffers at the sequence boundaries.
     // leftMismatches[0] checks the first characters; rightMismatches[end] checks the last ones.
     //
@@ -119,7 +122,7 @@ auto Matcher::matchWithOneInsertionImpl(const char *insertionData, const char *n
         }
 
         // Check if subsequent iterations can possibly succeed
-        if (i < compareLength -1 && leftMismatches[i] + tailMismatch > diffLimit) {
+        if (i < compareLength - 1 && leftMismatches[i] + tailMismatch > diffLimit) {
             return false;
         }
     }
@@ -135,8 +138,12 @@ auto Matcher::matchWithOneInsertionImpl(const char *insertionData, const char *n
 // Returns:
 // - The minimum number of mismatches found (0 to diffLimit)
 // - -1 if no valid insertion point meets the mismatch threshold
-auto Matcher::diffWithOneInsertionImpl(const char *insertionData, const char *normalData, int compareLength,
-                                       int diffLimit, int *leftMismatches, int *rightMismatches) -> int {
+auto Matcher::diffWithOneInsertionImpl(const char *insertionData,
+                                       const char *normalData,
+                                       int compareLength,
+                                       int diffLimit,
+                                       int *leftMismatches,
+                                       int *rightMismatches) -> int {
     const auto lastIndex = compareLength - 1;
 
     // Reuse the same forward and backward mismatch accumulation strategy.
@@ -210,7 +217,7 @@ auto Matcher::diffWithOneInsertionImpl(const char *insertionData, const char *no
         const auto totalDifferences = leftMismatches[i - 1] + rightVal;
 
         if (LIKELY_BRANCH(totalDifferences <= diffLimit)) {
-        minimumDifference = std::min(minimumDifference, totalDifferences);
+            minimumDifference = std::min(minimumDifference, totalDifferences);
 
             // If we found a perfect match, no need to continue further
             if (UNLIKELY_BRANCH(minimumDifference == 0)) {
@@ -223,37 +230,37 @@ auto Matcher::diffWithOneInsertionImpl(const char *insertionData, const char *no
 }
 
 bool Matcher::test() {
-    const char* normal = "ACGTAC";
-    const char* withIns = "ACGTTAC"; // insert T in the middle
+    const char *normal = "ACGTAC";
+    const char *withIns = "ACGTTAC";  // insert T in the middle
 
-    if(!matchWithOneInsertion(withIns, normal, 6, 1)) {
+    if (!matchWithOneInsertion(withIns, normal, 6, 1)) {
         std::cerr << "matchWithOneInsertion failed for insertion case" << std::endl;
         return false;
     }
     int diff = diffWithOneInsertion(withIns, normal, 6, 1);
-    if(diff != 0) {
+    if (diff != 0) {
         std::cerr << "diffWithOneInsertion expected 0 but got " << diff << " for insertion case" << std::endl;
         return false;
     }
 
-    const char* withMismatch = "ACGTTAG"; // one mismatch after insertion
-    if(!matchWithOneInsertion(withMismatch, normal, 6, 1)) {
+    const char *withMismatch = "ACGTTAG";  // one mismatch after insertion
+    if (!matchWithOneInsertion(withMismatch, normal, 6, 1)) {
         std::cerr << "matchWithOneInsertion failed for mismatch case" << std::endl;
         return false;
     }
     diff = diffWithOneInsertion(withMismatch, normal, 6, 2);
-    if(diff != 1) {
+    if (diff != 1) {
         std::cerr << "diffWithOneInsertion expected 1 but got " << diff << " for mismatch case" << std::endl;
         return false;
     }
 
     // should fail when mismatch exceeds allowed limit
-    if(matchWithOneInsertion(withMismatch, normal, 6, 0)) {
+    if (matchWithOneInsertion(withMismatch, normal, 6, 0)) {
         std::cerr << "matchWithOneInsertion unexpectedly succeeded when diffLimit=0" << std::endl;
         return false;
     }
     diff = diffWithOneInsertion(withMismatch, normal, 6, 0);
-    if(diff != -1) {
+    if (diff != -1) {
         std::cerr << "diffWithOneInsertion expected -1 but got " << diff << " when diffLimit=0" << std::endl;
         return false;
     }

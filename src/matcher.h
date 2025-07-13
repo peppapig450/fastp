@@ -11,6 +11,7 @@ class Matcher {
     // Buffer size threshold for using stack allocation.
     // 1024 ints ~= 4 KiB per buffer (total 8 KiB), safe for typical stack usage.
     static constexpr std::size_t StackLimit = 1024;
+
   public:
     Matcher() = default;
     ~Matcher() = default;
@@ -19,9 +20,13 @@ class Matcher {
     Matcher(const Matcher &) = delete;
     auto operator=(const Matcher &) -> Matcher & = delete;
 
-    static auto matchWithOneInsertion(const char *insertionData, const char *normalData, int compareLength,
+    static auto matchWithOneInsertion(const char *insertionData,
+                                      const char *normalData,
+                                      int compareLength,
                                       int diffLimit) -> bool;
-    static auto diffWithOneInsertion(const char *insertionData, const char *normalData, int compareLength,
+    static auto diffWithOneInsertion(const char *insertionData,
+                                     const char *normalData,
+                                     int compareLength,
                                      int diffLimit) -> int;
     static auto test() -> bool;
 
@@ -72,8 +77,16 @@ class Matcher {
 
     // Internal implementations that operate on preallocated mismatch buffers.
     // Called by the public methods via allocateAndExecute to abstract memory handling.
-    static auto matchWithOneInsertionImpl(const char *insertionData, const char *normalData, int compareLength,
-                                          int diffLimit, int *leftMismatches, int *rightMismatches) -> bool;
-    static auto diffWithOneInsertionImpl(const char *insertionData, const char *normalData, int compareLength,
-                                         int diffLimit, int *leftMismatches, int *rightMismatches) -> int;
+    static auto matchWithOneInsertionImpl(const char *insertionData,
+                                          const char *normalData,
+                                          int compareLength,
+                                          int diffLimit,
+                                          int *leftMismatches,
+                                          int *rightMismatches) -> bool;
+    static auto diffWithOneInsertionImpl(const char *insertionData,
+                                         const char *normalData,
+                                         int compareLength,
+                                         int diffLimit,
+                                         int *leftMismatches,
+                                         int *rightMismatches) -> int;
 };
