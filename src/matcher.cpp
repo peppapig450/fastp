@@ -137,48 +137,89 @@ auto Matcher::matchWithOneInsertionImpl(const char *insertionData, const char *n
 // - -1 if no valid insertion point meets the mismatch threshold
 auto Matcher::diffWithOneInsertionImpl(const char *insertionData, const char *normalData, int compareLength,
                                        int diffLimit, int *leftMismatches, int *rightMismatches) -> int {
+    const auto lastIndex = compareLength - 1;
+
     // Reuse the same forward and backward mismatch accumulation strategy.
     leftMismatches[0] = (insertionData[0] == normalData[0]) ? 0 : 1;
-    rightMismatches[compareLength - 1] = (insertionData[compareLength] == normalData[compareLength - 1]) ? 0 : 1;
+    rightMismatches[lastIndex] = (insertionData[compareLength] == normalData[lastIndex]) ? 0 : 1;
+    const auto tailMismatch = rightMismatches[lastIndex];
 
+    // Quick check if we can succeed at all
+    if (UNLIKELY_BRANCH(leftMismatches[0] + tailMismatch > diffLimit)) {
+        return -1;
+    }
+
+    // Forward pass with early termination tracking
+    auto maxValidLeft = lastIndex;
     for (int i = 1; i < compareLength; ++i) {
-        leftMismatches[i] = leftMismatches[i - 1];
-        if (insertionData[i] != normalData[i]) {
-            ++leftMismatches[i];
-        }
+        leftMismatches[i] = leftMismatches[i - 1] + ((insertionData[i] != normalData[i]) ? 1 : 0);
 
-        if (leftMismatches[i] + rightMismatches[compareLength - 1] > diffLimit) {
+        // If extending the prefix makes mismatches exceed diffLimit,
+        // then any further positions cannot be valid so stop scanning
+        if (UNLIKELY_BRANCH(leftMismatches[i] + tailMismatch > diffLimit)) {
+            maxValidLeft = i - 1;
             break;
         }
     }
 
-    for (int i = compareLength - 2; i >= 0; --i) {
-        rightMismatches[i] = rightMismatches[i + 1];
-        if (insertionData[i + 1] != normalData[i]) {
-            ++rightMismatches[i];
-        }
+    // Early exit if no valid positions available
+    if (UNLIKELY_BRANCH(maxValidLeft < 1)) {
+        return -1;
+    }
 
-        if (rightMismatches[i] + leftMismatches[0] > diffLimit) {
-            for (int rmIdx = 0; rmIdx < i; ++rmIdx) {
-                rightMismatches[rmIdx] = diffLimit + 1;
-            }
+    auto minValidRight = 0;
+    auto rightExceeded = false;
+
+    // Process backward only until we find invalid positions
+    for (int i = lastIndex - 1; i >= 0; --i) {
+        rightMismatches[i] = rightMismatches[i + 1] + ((insertionData[i + 1] != normalData[i]) ? 1 : 0);
+
+        if (UNLIKELY_BRANCH(rightMismatches[i] + leftMismatches[0] > diffLimit)) {
+            minValidRight = i + 1;
+            rightExceeded = true;
+            // Instead of filling array, just mark the boundary
             break;
         }
     }
 
-    // Find minumum difference across all insertion positions
+    // Find minumum difference only in valid range
     int minimumDifference = std::numeric_limits<int>::max();
 
-    for (int i = 1; i < compareLength; ++i) {
-        if (leftMismatches[i - 1] + rightMismatches[compareLength - 1] > diffLimit) {
-            return -1;  // Indicates difference exceeds limit
-        }
+    // Determine actual range to check
+    const auto startPos = rightExceeded ? minValidRight : 1;
+    const auto endPos = std::min(maxValidLeft + 1, compareLength);
 
-        const auto totalDifferences = leftMismatches[i - 1] + rightMismatches[i];
-        minimumDifference = std::min(minimumDifference, totalDifferences);
+    // Early exit if no overlap
+    if (UNLIKELY_BRANCH(startPos >= endPos)) {
+        return -1;
     }
 
-    return minimumDifference;
+    // Single pass through valid positions only
+    for (int i = startPos; i < endPos; ++i) {
+        const auto isRightInvalid = rightExceeded && i < minValidRight;
+
+        // Skip positions we know are invalid from backward pass
+        if (UNLIKELY_BRANCH(isRightInvalid)) {
+            continue;
+        }
+
+        // For positions before minValidRight when rightExceeded=true,
+        // we know that rightMismatches[i] would be greater than diffLimit.
+        const auto rightVal = (isRightInvalid ? (diffLimit + 1) : rightMismatches[i]);
+
+        const auto totalDifferences = leftMismatches[i - 1] + rightVal;
+
+        if (LIKELY_BRANCH(totalDifferences <= diffLimit)) {
+        minimumDifference = std::min(minimumDifference, totalDifferences);
+
+            // If we found a perfect match, no need to continue further
+            if (UNLIKELY_BRANCH(minimumDifference == 0)) {
+                return 0;
+            }
+        }
+    }
+
+    return (minimumDifference == std::numeric_limits<int>::max()) ? -1 : minimumDifference;
 }
 
 bool Matcher::test() {
