@@ -4,6 +4,22 @@
 #include <limits>
 #include <iostream>
 
+// Conditionally enable macros for compiler hints related to branch prediction
+#ifndef LIKELY_BRANCH
+    #if defined (__GNUC__) || defined (__clang__) || defined (__INTEL_COMPILER) || defined (__INTEL_LLVM_COMPILER)
+        // Hint to the compiler that the condition is likely true (used for branch prediction)
+        #define LIKELY_BRANCH(x) __builtin_expect(!!(x), 1)
+
+        // Hint to the compiler that the condition is likely false (used for branch prediction)
+        #define UNLIKELY_BRANCH(x) __builtin_expect(!!(x), 0)
+    #else
+        // MSVC and others do not support branch prediction hints so we define empty fallbacks (they have no effect)
+        #define LIKELY_BRANCH(x) (x)
+        #define UNLIKELY_BRANCH(x) (x)
+    #endif
+#endif
+
+
 // Call the internal implementation using a lambda function.
 //
 // The lambda captures the parameters by value (`[=]`) and will be passed two temporary
