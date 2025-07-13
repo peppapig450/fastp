@@ -107,14 +107,14 @@ void PolyX::trimPolyX(Read* r, FilterResult* fr, int compareReq) {
         }
         char polyBase = ATCG_BASES[poly];
 
-        int trimPos = rlen - 1;
-        while(trimPos >= 0 && data[trimPos] != polyBase) {
+        int trimPos = pos;
+        while(trimPos >= 0 && data[rlen - trimPos] != polyBase) {
             trimPos--;
         }
 
-        r->resize(trimPos + 1);
+        r->resize(rlen - trimPos);
         if(fr)
-          fr->addPolyXTrimmed(poly, rlen - trimPos - 1);
+          fr->addPolyXTrimmed(poly, trimPos);
     }
 }
 
