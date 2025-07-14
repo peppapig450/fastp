@@ -56,74 +56,94 @@ auto Matcher::matchWithOneInsertionImpl(const char *insertionData,
                                         int diffLimit,
                                         int *leftMismatches,
                                         int *rightMismatches) -> bool {
+    const auto lastIndex = compareLength - 1;
+
     // Step 1: Initialize the mismatch buffers at the sequence boundaries.
-    // leftMismatches[0] checks the first characters; rightMismatches[end] checks the last ones.
+    // leftMismatches[0] counts mismatches at the first character.
+    // rightMismatches[lastIndex] counts mismatches at the last character (excluding the inserted element).
     //
-    // The access insertionData[compareLength] is safe: it points to the extra character assumed
-    // to be inserted in `insertionData`, making its length `compareLength + 1`.
+    // Since `compareLength` is always > 0 (enforced by `allocateAndExecute`), these index accesses are safe.
     leftMismatches[0] = (insertionData[0] == normalData[0]) ? 0 : 1;
+    rightMismatches[lastIndex] = (insertionData[compareLength] == normalData[lastIndex]) ? 0 : 1;
 
-    // This index access is safe because `allocateAndExecute` throws if `compareLength` is equal to or less than 0
-    rightMismatches[compareLength - 1] = (insertionData[compareLength] == normalData[compareLength - 1]) ? 0 : 1;
+    const auto tailMismatch = rightMismatches[lastIndex];
 
-    // Step 2: Forward pass — accumulate mismatches from left to right.
-    //
-    // leftMismatches[i] contains the total number of mismatches between
-    // insertionData[0..i] and normalData[0..i].
-    for (int i = 1; i < compareLength; ++i) {
-        leftMismatches[i] = leftMismatches[i - 1];
-        if (insertionData[i] != normalData[i]) {
-            ++leftMismatches[i];
-        }
-
-        // Early exit: if the total mismatches (so far + final tail mismatch)
-        // exceed the allowed limit, we can skip further checking.
-        if (leftMismatches[i] + rightMismatches[compareLength - 1] > diffLimit) {
-            break;
-        }
-    }
-
-    // Step 3: Backward pass — accumulate mismatches from right to left.
-    //
-    // rightMismatches[i] stores mismatches from insertionData[i+1..end] and normalData[i..end-1].
-    for (int i = compareLength - 2; i >= 0; --i) {
-        rightMismatches[i] = rightMismatches[i + 1];
-        if (insertionData[i + 1] != normalData[i]) {
-            ++rightMismatches[i];
-        }
-
-        // If we exceed the diff limit during the backward pass, we propagate a high value
-        // to prevent false positives during insertion point evaluation.
-        if (rightMismatches[i] + leftMismatches[0] > diffLimit) {
-            for (int rmIdx = 0; rmIdx < i; ++rmIdx) {
-                rightMismatches[rmIdx] = diffLimit + 1;
-            }
-            break;
-        }
-    }
-
-    // Inside the loop this is repeatedly calculated despite not changing, so we hoist it
-    // outside for optimization.
-    const auto tailMismatch = rightMismatches[compareLength - 1];
-
-    // Check if we can possibly succeed before we enter the loop
-    if (leftMismatches[0] + tailMismatch > diffLimit) {
+    // Early exit optimization: if the mismatches at the first and last positions already exceed the allowed limit,
+    // there's no point in proceeding with further comparisons.
+    if (UNLIKELY_BRANCH(leftMismatches[0] + tailMismatch > diffLimit)) {
         return false;
     }
 
-    // Step 4: Evaluate all valid insertion points.
+    // Step 2: Forward pass — accumulate mismatches from left to right.
     //
-    // At each index `i`, we check whether the prefix (up to i-1) and the suffix (from i)
-    // match within the allowed mismatch budget. If so, return true.
+    // leftMismatches[i] holds the cumulative mismatch count between
+    // insertionData[0..i] and normalData[0..i]. The loop breaks early if
+    // at any point, the cumulative mismatches plus the tail mismatch exceed the diff limit.
+    //
+    // `maxValidLeft` tracks the last valid prefix boundary where the mismatch budget is not exceeded.
+    auto maxValidLeft = lastIndex;
     for (int i = 1; i < compareLength; ++i) {
-        const auto totalDifferences = leftMismatches[i - 1] + rightMismatches[i];
-        if (totalDifferences <= diffLimit) {
-            return true;
+        leftMismatches[i] = leftMismatches[i - 1] + static_cast<int>(insertionData[i] != normalData[i]);
+        if (UNLIKELY_BRANCH(leftMismatches[i] + tailMismatch > diffLimit)) {
+            maxValidLeft = i - 1;
+            break;
         }
+    }
 
-        // Check if subsequent iterations can possibly succeed
-        if (i < compareLength - 1 && leftMismatches[i] + tailMismatch > diffLimit) {
-            return false;
+    // Early bailout: if even the minimal prefix (first character) combined with the tail mismatch
+    // exceeds the diff limit, no valid insertion point is possible — exit immediately.
+    if (maxValidLeft < 0) return false;
+
+    // TODO: our current bottleneck is here with branch prediction going disastrously wrong
+    // - [] Try making this branchless or try making this LIKELY
+    // - [] Try unrolling the loop up to like 8 or 4 (figure this out)
+    // - [] Maybe try prefetching, this is highly cpu specific and might not be worth it
+    // - [] Adding restrict on our `leftMismatches` and `rightMismatches` would improve vectorization
+
+    // Step 3: Backward pass — accumulate mismatches from right to left.
+    //
+    // rightMismatches[i] holds the cumulative mismatch count between
+    // insertionData[i+1..end] and normalData[i..end-1].
+    //
+    // The loop terminates early when the combination of right-side mismatches and the first character mismatch
+    // exceeds the allowed limit. `minValidRight` marks the earliest valid suffix boundary.
+    // Instead of flooding the rightMismatches buffer with high values, we simply track the valid range.
+    int minValidRight = 0;
+    bool rightExceeded = false;
+    const auto leftEdgeMismatch = leftMismatches[0];
+
+    for (int i = lastIndex - 1; i >= 0; --i) {
+        const auto nextIndex = i + 1;
+        rightMismatches[i] = rightMismatches[i + 1] + static_cast<int>(insertionData[i + 1] != normalData[i]);
+        if (LIKELY_BRANCH(rightMismatches[i] + leftEdgeMismatch > diffLimit)) {
+            minValidRight = i + 1;
+            rightExceeded = true;
+            break;
+        }
+    }
+
+    // Step 4: Define the range of valid insertion points.
+    //
+    // Valid insertion positions are constrained by both the prefix (leftMismatches)
+    // and suffix (rightMismatches) mismatch counts. Positions beyond these valid
+    // ranges can be skipped altogether. If no valid range remains, we can exit early.
+    const auto startPos = rightExceeded ? minValidRight : 1;
+    const auto endPos = std::min(maxValidLeft + 1, compareLength);
+    if (startPos > endPos) return false;
+
+    // Step 5: Evaluate feasible insertion points.
+    //
+    // For each candidate insertion point, we check if the combined mismatch count of the prefix (leftMismatches)
+    // and suffix (rightMismatches) stays within the allowed threshold. The right-side count is skipped altogether
+    // if the backward pass already determined the suffix exceeds the limit (rightExceeded).
+    //
+    // The loop breaks early on a successful match without unnecessary iterations.
+    for (int i = startPos; i < endPos; ++i) {
+        const auto skipRight = rightExceeded && (i < minValidRight);
+        const auto rightCount = skipRight ? (diffLimit + 1) : rightMismatches[i];
+
+        if (LIKELY_BRANCH(leftMismatches[i - 1] + rightCount < diffLimit)) {
+            return true;
         }
     }
 
