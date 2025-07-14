@@ -9,6 +9,7 @@
 #include "polyx.h"
 #include "nucleotidetree.h"
 #include "evaluator.h"
+#include "matcher.h"
 #include <time.h>
 
 UnitTest::UnitTest(){
@@ -25,6 +26,7 @@ void UnitTest::run(){
     passed &= report(AdapterTrimmer::test(), "AdapterTrimmer::test");
     passed &= report(BaseCorrector::test(), "BaseCorrector::test");
     passed &= report(PolyX::test(), "PolyX::test");
+    passed &= report(Matcher::test(), "Matcher::test");
     passed &= report(NucleotideTree::test(), "NucleotideTree::test");
     passed &= report(Evaluator::test(), "Evaluator::test");
     printf("\n==========================\n");
