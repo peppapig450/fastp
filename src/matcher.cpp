@@ -19,6 +19,46 @@
     #endif
 #endif
 
+// Helper macros for passing parameters
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
+
+// Per compiler macros for unrolling N iterations of a loop
+#ifndef UNROLL_LOOP
+    #if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
+        // Clang of ICX (Intel LLVM-based compiler)
+        #define UNROLL_LOOP(N) _Pragma(TOSTRING(clang loop unroll_count(N)))
+    #elif defined(__INTEL_COMPILER)
+        // ICC classic (non-LLVM)
+        #define UNROLL_LOOP(N) _Pragma(TOSTRING(unroll(N)))
+    #elif defined(__GNUC__)
+        #define UNROLL_LOOP(N) _Pragma(TOSTRING(GCC unroll N))
+    #elif defined(_MSC_VER)
+        // MSVC doesn't support unroll count reliably; fallback to simple unroll hint
+        #define UNROLL_LOOP(N) __pragma(loop(unroll))
+    #else
+        #define UNROLL_LOOP(N)
+    #endif
+#endif
+
+// Macro to apply compiler-specific restrict qualifiers for pointers.
+//
+// `RESTRICT` hints to the compiler that pointers annotated with it do NOT alias with other pointers,
+// allowing for more aggressive optimizations (e.g., vectorization, better instruction scheduling).
+//
+// WARNING: Only apply `RESTRICT` to pointers you can *guarantee* do not alias with other pointers.
+// Misusing restrict leads to undefined behavior and quiet miscompilations.
+//
+// TLDR: Use this on local, non-overlapping buffers (e.g., scratch space) for performance wins.
+// If you’re unsure, do not use `RESTRICT`. Bad restrict is worse than no restrict.
+#if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER) || defined(__INTEL_LLVM_COMPILER)
+    #define RESTRICT __restrict__
+#elif defined(_MSC_VER)
+    #define RESTRICT __restrict
+#else
+    #define RESTRICT
+#endif
+
 // Call the internal implementation using a lambda function.
 //
 // The lambda captures the parameters by value (`[=]`) and will be passed two temporary
@@ -44,8 +84,7 @@ auto Matcher::diffWithOneInsertion(const char *insertionData, const char *normal
     });
 }
 
-// TODO: the loops here can be vectorized, either with IVDEP auto-vectorization or SIMD intrinsics
-
+// TODO: the remaining speed improvements here likely lie with vectorizing
 // Internal implementation of matchWithOneInsertion.
 //
 // Computes whether the two sequences differ by at most `diffLimit` mismatches.
@@ -54,8 +93,8 @@ auto Matcher::matchWithOneInsertionImpl(const char *insertionData,
                                         const char *normalData,
                                         int compareLength,
                                         int diffLimit,
-                                        int *leftMismatches,
-                                        int *rightMismatches) -> bool {
+                                        int *RESTRICT leftMismatches,
+                                        int *RESTRICT rightMismatches) -> bool {
     const auto lastIndex = compareLength - 1;
 
     // Step 1: Initialize the mismatch buffers at the sequence boundaries.
@@ -82,6 +121,7 @@ auto Matcher::matchWithOneInsertionImpl(const char *insertionData,
     //
     // `maxValidLeft` tracks the last valid prefix boundary where the mismatch budget is not exceeded.
     auto maxValidLeft = lastIndex;
+    UNROLL_LOOP(8)  // Unroll this loop for 8 iterations to avoid branch mispredictions
     for (int i = 1; i < compareLength; ++i) {
         leftMismatches[i] = leftMismatches[i - 1] + static_cast<int>(insertionData[i] != normalData[i]);
         if (UNLIKELY_BRANCH(leftMismatches[i] + tailMismatch > diffLimit)) {
@@ -92,13 +132,9 @@ auto Matcher::matchWithOneInsertionImpl(const char *insertionData,
 
     // Early bailout: if even the minimal prefix (first character) combined with the tail mismatch
     // exceeds the diff limit, no valid insertion point is possible — exit immediately.
-    if (maxValidLeft < 0) return false;
-
-    // TODO: our current bottleneck is here with branch prediction going disastrously wrong
-    // - [] Try making this branchless or try making this LIKELY
-    // - [] Try unrolling the loop up to like 8 or 4 (figure this out)
-    // - [] Maybe try prefetching, this is highly cpu specific and might not be worth it
-    // - [] Adding restrict on our `leftMismatches` and `rightMismatches` would improve vectorization
+    if (maxValidLeft < 0) {
+        return false;
+    }
 
     // Step 3: Backward pass — accumulate mismatches from right to left.
     //
@@ -112,10 +148,12 @@ auto Matcher::matchWithOneInsertionImpl(const char *insertionData,
     bool rightExceeded = false;
     const auto leftEdgeMismatch = leftMismatches[0];
 
+    // Unroll this loop for 8 iterations to avoid branch mispredictions
+    UNROLL_LOOP(8)
     for (int i = lastIndex - 1; i >= 0; --i) {
         const auto nextIndex = i + 1;
         rightMismatches[i] = rightMismatches[i + 1] + static_cast<int>(insertionData[i + 1] != normalData[i]);
-        if (LIKELY_BRANCH(rightMismatches[i] + leftEdgeMismatch > diffLimit)) {
+        if (UNLIKELY_BRANCH(rightMismatches[i] + leftEdgeMismatch > diffLimit)) {
             minValidRight = i + 1;
             rightExceeded = true;
             break;
@@ -129,7 +167,9 @@ auto Matcher::matchWithOneInsertionImpl(const char *insertionData,
     // ranges can be skipped altogether. If no valid range remains, we can exit early.
     const auto startPos = rightExceeded ? minValidRight : 1;
     const auto endPos = std::min(maxValidLeft + 1, compareLength);
-    if (startPos > endPos) return false;
+    if (startPos > endPos) {
+        return false;
+    }
 
     // Step 5: Evaluate feasible insertion points.
     //
@@ -142,7 +182,7 @@ auto Matcher::matchWithOneInsertionImpl(const char *insertionData,
         const auto skipRight = rightExceeded && (i < minValidRight);
         const auto rightCount = skipRight ? (diffLimit + 1) : rightMismatches[i];
 
-        if (LIKELY_BRANCH(leftMismatches[i - 1] + rightCount < diffLimit)) {
+        if (LIKELY_BRANCH(leftMismatches[i - 1] + rightCount <= diffLimit)) {
             return true;
         }
     }
