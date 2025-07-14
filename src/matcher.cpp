@@ -202,8 +202,8 @@ auto Matcher::diffWithOneInsertionImpl(const char *insertionData,
                                        const char *normalData,
                                        int compareLength,
                                        int diffLimit,
-                                       int *leftMismatches,
-                                       int *rightMismatches) -> int {
+                                       int *RESTRICT leftMismatches,
+                                       int *RESTRICT rightMismatches) -> int {
     const auto lastIndex = compareLength - 1;
 
     // Reuse the same forward and backward mismatch accumulation strategy.
