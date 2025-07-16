@@ -1,21 +1,20 @@
 #ifndef STATS_H
 #define STATS_H
 
-#include <stdio.h>
-#include <stdlib.h>
+#include <array>
+#include <cstddef>
 #include <string>
+#include <unordered_map>
 #include <vector>
-#include <map>
 #include "read.h"
 #include "options.h"
 
-using namespace std;
 
 class Stats{
 public:
     // this @guessedCycles parameter should be calculated using the first several records
     Stats(Options* opt, bool isRead2 = false, int guessedCycles = 0, int bufferMargin = 1024);
-    ~Stats();
+    ~Stats() = default;
     int getCycles();
     long getReads();
     long getBases();
@@ -23,7 +22,7 @@ public:
     long getQ30();
     long getQ40();
     long getGCNumber();
-    long* getQualHist();
+    auto getQualHist() const -> const std::array<long, 128>&;
     // by default the qualified qual score is Q20 ('5')
     void statRead(Read* r);
 
@@ -48,6 +47,14 @@ public:
     static string list2string(long* list, int size);
     static int base2val(char base) noexcept;
 
+    // Base types for all count/statistics vectors
+    using CountVector = std::vector<long>;
+
+    // Compound types for per-base cycle data
+    static constexpr std::size_t BaseCount = 8;
+    using BaseArray = std::array<long, BaseCount>;
+    using BaseCycleArray = std::array<CountVector, BaseCount>;
+
 private:
     void extendBuffer(int newBufLen);
     string makeKmerTD(int i, int j);
@@ -70,27 +77,32 @@ private:
     'G' % 8 = 7
     'N' % 8 = 6
     */
-    long *mCycleQ30Bases[8];
-    long *mCycleQ20Bases[8];
-    long *mCycleBaseContents[8];
-    long *mCycleBaseQual[8];
-    long *mCycleTotalBase;
-    long *mCycleTotalQual;
-    long *mKmer;
-    long mBaseQualHistogram[128];
+    // TODO: replace this indexing system as it wastes memory
+    // TODO: using structs would likely improve cache locality for some of these
+    BaseCycleArray mCycleQ30Bases;
+    BaseCycleArray mCycleQ20Bases;
+    BaseCycleArray mCycleBaseContents;
+    BaseCycleArray mCycleBaseQual;
 
-    map<string, double*> mQualityCurves;
-    map<string, double*> mContentCurves;
-    map<string, long> mOverRepSeq;
-    map<string, long*> mOverRepSeqDist;
+    CountVector mCycleTotalBase;
+    CountVector mCycleTotalQual;
+    CountVector mKmer;
+
+    // Replace with const?
+    std::array<long, 128> mBaseQualHistogram{}; // Initializing at construction like this is preferred
+
+    std::unordered_map<string, std::vector<double>> mQualityCurves;
+    std::unordered_map<string, std::vector<double>> mContentCurves;
+    std::unordered_map<string, long> mOverRepSeq;
+    std::unordered_map<string, std::vector<long>> mOverRepSeqDist;
 
 
     int mCycles;
     int mBufLen;
     long mBases;
-    long mQ20Bases[8];
-    long mQ30Bases[8];
-    long mBaseContents[8];
+    BaseArray mQ20Bases;
+    BaseArray mQ30Bases;
+    BaseArray mBaseContents;
     long mQ20Total;
     long mQ30Total;
     long mQ40Total;

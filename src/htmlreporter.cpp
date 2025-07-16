@@ -1,4 +1,5 @@
 #include "htmlreporter.h"
+#include <array>
 #include <chrono>
 #include <memory.h>
 #include "knownadapters.h"
@@ -342,7 +343,7 @@ void HtmlReporter::reportDuplication(ofstream& ofs) {
 }
 
 void HtmlReporter::reportQualHistogram(ofstream& ofs, string caption, Stats* stats1, Stats* stats2) {
-    long* hist1 = stats1->getQualHist();
+    std::array<long, 128> hist1 = stats1->getQualHist();
 
     string divName = replace(caption, " ", "_");
     divName = replace(divName, ":", "_");
@@ -379,7 +380,7 @@ void HtmlReporter::reportQualHistogram(ofstream& ofs, string caption, Stats* sta
     ofs << "};" << endl;
 
     if(stats2 != NULL) {
-        long* hist2 = stats2->getQualHist();
+        std::array<long, 128> hist2 = stats2->getQualHist();
         ofs << " var hist2 = {" << endl;
         ofs << " x: [";
         first = true;

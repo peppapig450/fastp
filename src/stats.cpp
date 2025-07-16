@@ -1,11 +1,17 @@
 #include "stats.h"
 #include <memory.h>
+#include <algorithm>
 #include <array>
 #include <sstream>
+#include <string>
+#include <unordered_map>
+#include <vector>
 #include "util.h"
 
 #define KMER_LEN 5
 
+// TODO: this is doing way too much, clean it up.
+// We should use direct initialization syntax
 Stats::Stats(Options* opt, bool isRead2, int guessedCycles, int bufferMargin){
     mOptions = opt;
     mIsRead2 = isRead2;
@@ -37,108 +43,41 @@ Stats::Stats(Options* opt, bool isRead2, int guessedCycles, int bufferMargin){
         mQ30Bases[i] = 0;
         mBaseContents[i] = 0;
 
-        mCycleQ30Bases[i] = new long[mBufLen];
-        memset(mCycleQ30Bases[i], 0, sizeof(long) * mBufLen);
+        // TODO: the mBufLen approach probably is not needed with STL containers look into it
 
-        mCycleQ20Bases[i] = new long[mBufLen];
-        memset(mCycleQ20Bases[i], 0, sizeof(long) * mBufLen);
-
-        mCycleBaseContents[i] = new long[mBufLen];
-        memset(mCycleBaseContents[i], 0, sizeof(long) * mBufLen);
-
-        mCycleBaseQual[i] = new long[mBufLen];
-        memset(mCycleBaseQual[i], 0, sizeof(long) * mBufLen);
+        // This will look difference once direct initialization syntax is used as we can use the 
+        // type alias we defined in the header.
+        mCycleQ30Bases[i].assign(mBufLen, 0);
+        mCycleQ20Bases[i].assign(mBufLen, 0);
+        mCycleBaseContents[i].assign(mBufLen, 0);
+        mCycleBaseQual[i].assign(mBufLen, 0);
     }
-    mCycleTotalBase = new long[mBufLen];
-    memset(mCycleTotalBase, 0, sizeof(long)*mBufLen);
 
-    mCycleTotalQual = new long[mBufLen];
-    memset(mCycleTotalQual, 0, sizeof(long)*mBufLen);
+    mCycleTotalBase.assign(mBufLen, 0);
+    mCycleTotalQual.assign(mBufLen, 0);
 
+    // TODO: this looks to be double the needed size which can skew mean calculations
     mKmerBufLen = 2<<(KMER_LEN * 2);
-    mKmer = new long[mKmerBufLen];
-    memset(mKmer, 0, sizeof(long)*mKmerBufLen);
-
-    memset(mBaseQualHistogram, 0, sizeof(long)*128);
+    mKmer.assign(mKmerBufLen, 0);
 
     initOverRepSeq();
 }
 
-void Stats::extendBuffer(int newBufLen){
-    if(newBufLen <= mBufLen)
-        return ;
-
-    long* newBuf = NULL;
-
-    for(int i=0; i<8; i++){
-        newBuf = new long[newBufLen];
-        memset(newBuf, 0, sizeof(long)*newBufLen);
-        memcpy(newBuf, mCycleQ30Bases[i], sizeof(long) * mBufLen);
-        delete[] mCycleQ30Bases[i];
-        mCycleQ30Bases[i] = newBuf;
-
-        newBuf = new long[newBufLen];
-        memset(newBuf, 0, sizeof(long)*newBufLen);
-        memcpy(newBuf, mCycleQ20Bases[i], sizeof(long) * mBufLen);
-        delete[] mCycleQ20Bases[i];
-        mCycleQ20Bases[i] = newBuf;
-
-        newBuf = new long[newBufLen];
-        memset(newBuf, 0, sizeof(long)*newBufLen);
-        memcpy(newBuf, mCycleBaseContents[i], sizeof(long) * mBufLen);
-        delete[] mCycleBaseContents[i];
-        mCycleBaseContents[i] = newBuf;
-
-        newBuf = new long[newBufLen];
-        memset(newBuf, 0, sizeof(long)*newBufLen);
-        memcpy(newBuf, mCycleBaseQual[i], sizeof(long) * mBufLen);
-        delete[] mCycleBaseQual[i];
-        mCycleBaseQual[i] = newBuf;
+void Stats::extendBuffer(int newBufLen) {
+    if (newBufLen <= mBufLen) {
+        return;
     }
-    newBuf = new long[newBufLen];
-    memset(newBuf, 0, sizeof(long)*newBufLen);
-    memcpy(newBuf, mCycleTotalBase, sizeof(long)*mBufLen);
-    delete[] mCycleTotalBase;
-    mCycleTotalBase = newBuf;
 
-    newBuf = new long[newBufLen];
-    memset(newBuf, 0, sizeof(long)*newBufLen);
-    memcpy(newBuf, mCycleTotalQual, sizeof(long)*mBufLen);
-    delete[] mCycleTotalQual;
-    mCycleTotalQual = newBuf;
+    for (int i=0; i<8; i++) {
+        mCycleQ30Bases[i].resize(newBufLen, 0);
+        mCycleQ20Bases[i].resize(newBufLen, 0);
+        mCycleBaseContents[i].resize(newBufLen, 0);
+        mCycleBaseQual[i].resize(newBufLen, 0);
+    }
+    mCycleTotalBase.resize(newBufLen, 0);
+    mCycleTotalQual.resize(newBufLen, 0);
 
     mBufLen = newBufLen;
-}
-
-Stats::~Stats() {
-    for(int i=0; i<8; i++){
-        delete[] mCycleQ30Bases[i];
-        mCycleQ30Bases[i] = NULL;
-
-        delete[] mCycleQ20Bases[i];
-        mCycleQ20Bases[i] = NULL;
-
-        delete[] mCycleBaseContents[i];
-        mCycleBaseContents[i] = NULL;
-
-        delete[] mCycleBaseQual[i];
-        mCycleBaseQual[i] = NULL;
-    }
-
-    delete[] mCycleTotalBase;
-    delete[] mCycleTotalQual;
-
-    // delete memory of curves
-    map<string, double*>::iterator iter;
-    for(iter = mQualityCurves.begin(); iter != mQualityCurves.end(); iter++) {
-        delete[] iter->second;
-    }
-    for(iter = mContentCurves.begin(); iter != mContentCurves.end(); iter++) {
-        delete[] iter->second;
-    }
-    delete[] mKmer;
-
-    deleteOverRepSeqDist();
 }
 
 void Stats::summarize(bool forced) {
@@ -146,15 +85,17 @@ void Stats::summarize(bool forced) {
         return;
 
     // first get the cycle and count total bases
-    for(int c=0; c<mBufLen; c++) {
+    for (std::size_t c = 0; c < mCycleTotalBase.size(); c++) {
         mBases += mCycleTotalBase[c];
-        if (mCycleTotalBase[c] == 0){
+        if (mCycleTotalBase[c] == 0) { 
             mCycles = c;
             break;
         }
     }
-    if(mCycleTotalBase[mBufLen-1]>0)
+
+    if (!mCycleTotalBase.empty() && mCycleTotalBase.back() > 0) {
         mCycles = mBufLen;
+    }
 
     // Q20, Q30, base content
     for(int i=0; i<8; i++) {
@@ -173,8 +114,7 @@ void Stats::summarize(bool forced) {
 
 
     // quality curve for mean qual
-    double* meanQualCurve = new double[mCycles];
-    memset(meanQualCurve, 0, sizeof(double)*mCycles);
+    std::vector<double> meanQualCurve(mCycles);
     for(int c=0; c<mCycles; c++) {
         meanQualCurve[c] = (double)mCycleTotalQual[c] / (double)mCycleTotalBase[c];
     }
@@ -186,10 +126,8 @@ void Stats::summarize(bool forced) {
         char base = alphabets[i];
         // get last 3 bits
         char b = base & 0x07;
-        double* qualCurve = new double[mCycles];
-        memset(qualCurve, 0, sizeof(double)*mCycles);
-        double* contentCurve = new double[mCycles];
-        memset(contentCurve, 0, sizeof(double)*mCycles);
+        std::vector<double> qualCurve(mCycles);
+        std::vector<double> contentCurve(mCycles);
         for(int c=0; c<mCycles; c++) {
             if(mCycleBaseContents[b][c] == 0)
                 qualCurve[c] = meanQualCurve[c];
@@ -202,8 +140,7 @@ void Stats::summarize(bool forced) {
     }
 
     // GC content curve
-    double* gcContentCurve = new double[mCycles];
-    memset(gcContentCurve, 0, sizeof(double)*mCycles);
+    std::vector<double> gcContentCurve(mCycles);
     char gBase = 'G' & 0x07;
     char cBase = 'C' & 0x07;
     for(int c=0; c<mCycles; c++) {
@@ -211,14 +148,9 @@ void Stats::summarize(bool forced) {
     }
     mContentCurves["GC"] = gcContentCurve;
 
-    mKmerMin = mKmer[0];
-    mKmerMax = mKmer[0];
-    for(int i=0; i<mKmerBufLen; i++) {
-        if(mKmer[i] > mKmerMax)
-            mKmerMax = mKmer[i];
-        if(mKmer[i] < mKmerMin)
-            mKmerMin = mKmer[i];
-    }
+    auto minmax = std::minmax_element(mKmer.begin(), mKmer.end());
+    mKmerMin = *minmax.first;
+    mKmerMax = *minmax.second;
 
     summarized = true;
 }
@@ -387,7 +319,7 @@ long Stats::getQ40() {
     return mQ40Total;
 }
 
-long* Stats::getQualHist() {
+auto Stats::getQualHist() const -> const std::array<long, 128>& {
     return mBaseQualHistogram;
 }
 
@@ -423,12 +355,13 @@ void Stats::reportJson(ofstream& ofs, string padding) {
     ofs << padding << "\t" << "\"quality_curves\": {" << endl;
     for(int i=0 ;i<5; i++) {
         string name=qualNames[i];
-        double* curve = mQualityCurves[name];
+        const std::vector<double>& curve = mQualityCurves[name]; // Maybe rename this?
         ofs << padding << "\t\t" << "\"" << name << "\":[";
-        for(int c = 0; c<mCycles; c++) {
+        const auto curve_size = curve.size();
+        for(std::size_t c = 0; c < curve_size; c++) {
             ofs << curve[c];
             // not the end
-            if(c != mCycles - 1)
+            if(c != curve_size - 1)
                 ofs << ",";
         }
         ofs << "]";
@@ -444,12 +377,13 @@ void Stats::reportJson(ofstream& ofs, string padding) {
     ofs << padding << "\t" << "\"content_curves\": {" << endl;
     for(int i=0 ;i<6; i++) {
         string name=contentNames[i];
-        double* curve = mContentCurves[name];
+        const std::vector<double>& curve = mContentCurves[name];
         ofs << padding << "\t\t" << "\"" << name << "\":[";
-        for(int c = 0; c<mCycles; c++) {
+        const auto curve_size = curve.size();
+        for(std::size_t c = 0; c < curve_size; c++) {
             ofs << curve[c];
             // not the end
-            if(c != mCycles - 1)
+            if(c != curve_size - 1)
                 ofs << ",";
         }
         ofs << "]";
@@ -480,7 +414,7 @@ void Stats::reportJson(ofstream& ofs, string padding) {
     ofs << padding << "\t" << "}," << endl;
 
     // over represented seqs
-    map<string, long>::iterator iter;
+    std::unordered_map<string, long>::iterator iter;
     bool first = true;
     ofs << padding << "\t" << "\"overrepresented_sequences\": {" << endl;
     for(iter=mOverRepSeq.begin(); iter!=mOverRepSeq.end(); iter++) {
@@ -572,7 +506,7 @@ bool Stats::overRepPassed(string& seq, long count) {
 void Stats::reportHtmlORA(ofstream& ofs, string filteringType, string readName) {
     // over represented seqs
     double dBases = mBases;
-    map<string, long>::iterator iter;
+    std::unordered_map<string, long>::iterator iter;
     int displayed = 0;
 
     // KMER
@@ -587,7 +521,7 @@ void Stats::reportHtmlORA(ofstream& ofs, string filteringType, string readName) 
     ofs << "<table class='summary_table'>\n";
     ofs << "<tr style='font-weight:bold;'><td>overrepresented sequence</td><td>count (% of bases)</td><td>distribution: cycle 1 ~ cycle " << mEvaluatedSeqLen << "</td></tr>"<<endl;
     int found = 0;
-    for(iter=mOverRepSeq.begin(); iter!=mOverRepSeq.end(); iter++) {
+    for(iter = mOverRepSeq.begin(); iter != mOverRepSeq.end(); iter++) {
         string seq = iter->first;
         long count = iter->second;
         if(!overRepPassed(seq, count))
@@ -610,7 +544,7 @@ void Stats::reportHtmlORA(ofstream& ofs, string filteringType, string readName) 
     ofs << "var seqlen = " << mEvaluatedSeqLen << ";" << endl;
     ofs << "var orp_dist = {" << endl;
     bool first = true;
-    for(iter=mOverRepSeq.begin(); iter!=mOverRepSeq.end(); iter++) {
+    for(iter = mOverRepSeq.begin(); iter != mOverRepSeq.end(); iter++) {
         string seq = iter->first;
         long count = iter->second;
         if(!overRepPassed(seq, count))
@@ -621,7 +555,7 @@ void Stats::reportHtmlORA(ofstream& ofs, string filteringType, string readName) 
         } else
             first = false;
         ofs << "\t\"" << divName << "_" << seq << "\":[";
-        for(int i=0; i<mEvaluatedSeqLen; i++){
+        for(std::size_t i = 0; i < mOverRepSeqDist[seq].size(); i++) {
             if(i !=0 )
                 ofs << ",";
             ofs << mOverRepSeqDist[seq][i];
@@ -697,7 +631,7 @@ string Stats::makeKmerTD(int i, int j) {
     string first = kmer3(i);
     string last = kmer2(j);
     string kmer = first+last;
-    double meanBases = (double)(mBases+1) / mKmerBufLen;
+    double meanBases = (double)(mBases+1) / mKmer.size();
     double prop = val / meanBases;
     double frac = 0.5;
     if(prop > 2.0) 
@@ -796,7 +730,7 @@ void Stats::reportHtmlQuality(ofstream& ofs, string filteringType, string readNa
         string base = alphabets[b];
         json_str += "{";
         json_str += "x:[" + list2string(x, total) + "],";
-        json_str += "y:[" + list2string(mQualityCurves[base], total, x) + "],";
+        json_str += "y:[" + list2string(mQualityCurves[base].data(), total, x) + "],";
         json_str += "name: '" + base + "',";
         json_str += "mode:'lines',";
         json_str += "line:{color:'" + colors[b] + "', width:1}\n";
@@ -883,7 +817,7 @@ void Stats::reportHtmlContents(ofstream& ofs, string filteringType, string readN
 
         json_str += "{";
         json_str += "x:[" + list2string(x, total) + "],";
-        json_str += "y:[" + list2string(mContentCurves[base], total, x) + "],";
+        json_str += "y:[" + list2string(mContentCurves[base].data(), total, x) + "],";
         json_str += "name: '" + name + "',";
         json_str += "mode:'lines',";
         json_str += "line:{color:'" + colors[b] + "', width:1}\n";
@@ -918,7 +852,7 @@ Stats* Stats::merge(vector<Stats*>& list) {
     Stats* s = new Stats(list[0]->mOptions, list[0]->mIsRead2, cycles, 0);
 
     // init overrepresented seq maps
-    map<string, long>::iterator iter;
+    std::unordered_map<string, long>::iterator iter;
 
     for(int t=0; t<list.size(); t++) {
         int curCycles =  list[t]->getCycles();
@@ -927,8 +861,13 @@ Stats* Stats::merge(vector<Stats*>& list) {
         s->mLengthSum += list[t]->mLengthSum;
 
         // merge per cycle counting for different bases
-        for(int i=0; i<8; i++){
-            for(int j=0; j<cycles && j<curCycles; j++) {
+        for (int i=0; i<8; i++) {
+            std::size_t sizeA = s->mCycleQ30Bases[i].size();
+            std::size_t sizeB = list[t]->mCycleQ30Bases[i].size();
+            std::size_t limit =
+                std::min({static_cast<std::size_t>(cycles), sizeA, sizeB, static_cast<std::size_t>(curCycles)});
+
+            for (std::size_t j = 0; j < limit; j++) {
                 s->mCycleQ30Bases[i][j] += list[t]->mCycleQ30Bases[i][j];
                 s->mCycleQ20Bases[i][j] += list[t]->mCycleQ20Bases[i][j];
                 s->mCycleBaseContents[i][j] += list[t]->mCycleBaseContents[i][j];
@@ -936,14 +875,18 @@ Stats* Stats::merge(vector<Stats*>& list) {
             }
         }
 
+        size_t limit = std::min({static_cast<size_t>(cycles),
+                                 s->mCycleTotalBase.size(),
+                                 list[t]->mCycleTotalBase.size(),
+                                 static_cast<size_t>(curCycles)});
         // merge per cycle counting for all bases
-        for(int j=0; j<cycles && j<curCycles; j++) {
+        for (std::size_t j = 0; j < limit; j++) {
             s->mCycleTotalBase[j] += list[t]->mCycleTotalBase[j];
             s->mCycleTotalQual[j] += list[t]->mCycleTotalQual[j];
         }
 
         // merge kMer
-        for(int i=0; i<s->mKmerBufLen; i++) {
+        for(std::size_t i = 0; i < s->mKmer.size(); i++) {
             s->mKmer[i] += list[t]->mKmer[i];
         }
 
@@ -956,9 +899,12 @@ Stats* Stats::merge(vector<Stats*>& list) {
         for(iter = s->mOverRepSeq.begin(); iter != s->mOverRepSeq.end(); iter++) {
             string seq = iter->first;
             s->mOverRepSeq[seq] += list[t]->mOverRepSeq[seq];
-            if(s->mIsRead2 != list[t]->mIsRead2 || list[t]->mOverRepSeqDist[seq] == NULL)
+            if(s->mIsRead2 != list[t]->mIsRead2)
                 cerr << t <<seq<< ":" << (s->mIsRead2?2:1 ) << "," << (list[t]->mIsRead2?2:1 ) <<endl;
-            for(int i=0; i<s->mEvaluatedSeqLen; i++) {
+
+            std::size_t sizeA = s->mOverRepSeqDist[seq].size();
+            std::size_t sizeB = list[t]->mOverRepSeqDist[seq].size();
+            for (std::size_t i = 0; i < sizeA && i < sizeB; i++) {
                 s->mOverRepSeqDist[seq][i] += list[t]->mOverRepSeqDist[seq][i];
             }
         }
@@ -970,28 +916,16 @@ Stats* Stats::merge(vector<Stats*>& list) {
 }
 
 void Stats::initOverRepSeq() {
-    map<string, long> overRepSeq;
+    std::unordered_map<string, long> overRepSeq;
     if(mIsRead2)
         overRepSeq = mOptions->overRepSeqs2;
     else
         overRepSeq = mOptions->overRepSeqs1;
 
-    map<string, long>::iterator iter;
+    std::unordered_map<string, long>::iterator iter;
     for(iter = overRepSeq.begin(); iter!=overRepSeq.end(); iter++) {
         string seq = iter->first;
         mOverRepSeq[seq] = 0;
-        long* distBuf = new long[mEvaluatedSeqLen];
-        memset(distBuf, 0, sizeof(long)*mEvaluatedSeqLen);
-        mOverRepSeqDist[seq] = distBuf;
+        mOverRepSeqDist[seq].assign(mEvaluatedSeqLen, 0);
     }
 }
-
-void Stats::deleteOverRepSeqDist() {
-    map<string, long>::iterator iter;
-    for(iter = mOverRepSeq.begin(); iter!=mOverRepSeq.end(); iter++) {
-        string seq = iter->first;
-        delete[] mOverRepSeqDist[seq];
-        mOverRepSeqDist[seq] = NULL;
-    }
-}
-
