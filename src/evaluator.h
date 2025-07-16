@@ -1,12 +1,10 @@
 #ifndef EVALUATOR_H
 #define EVALUATOR_H
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <string>
 #include "options.h"
-#include "util.h"
-#include "read.h"
+#include "read.h" 
+#include <unordered_map>
 
 using namespace std;
 
@@ -20,7 +18,7 @@ public:
     bool isTwoColorSystem();
     void evaluateSeqLen();
     void evaluateOverRepSeqs();
-    void computeOverRepSeq(string filename, map<string, long>& hotseqs, int seqLen);
+    void computeOverRepSeq(string filename, std::unordered_map<string, long>& hotseqs, int seqLen);
     int computeSeqLen(string filename);
 
     static bool test();
