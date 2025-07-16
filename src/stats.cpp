@@ -1,5 +1,6 @@
 #include "stats.h"
 #include <memory.h>
+#include <array>
 #include <sstream>
 #include "util.h"
 
@@ -331,19 +332,23 @@ void Stats::statRead(Read* r) {
     mReads++;
 }
 
-int Stats::base2val(char base) {
-    switch(base){
-        case 'A':
-            return 0;
-        case 'T':
-            return 1;
-        case 'C':
-            return 2;
-        case 'G':
-            return 3;
-        default:
-            return -1;
-    }
+auto Stats::base2val(char base) noexcept -> int {
+    // Static lookup table initialized once using a lambda expression.
+    // The `[]() { ... }()` syntax defines an immediately-invoked lambda expression (IEFE).
+    // This allows us to fill and return the lookup table in a single expression,
+    // and ensures the initialization happens only once in a thread safe manner.
+    static const std::array<signed char, 256> base_to_value_lookup = []() {
+        std::array<signed char, 256> lookup_table;
+
+        lookup_table.fill(-1);  // Default all values to -1 (invalid base)
+        lookup_table['A'] = 0;
+        lookup_table['T'] = 1;
+        lookup_table['C'] = 2;
+        lookup_table['G'] = 3;
+        return lookup_table;
+    }();
+
+    return base_to_value_lookup[static_cast<unsigned char>(base)];
 }
 
 int Stats::getCycles() {

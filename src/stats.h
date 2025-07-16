@@ -46,7 +46,7 @@ public:
     static string list2string(double* list, int size);
     static string list2string(double* list, int size, long* coords);
     static string list2string(long* list, int size);
-    static int base2val(char base);
+    static int base2val(char base) noexcept;
 
 private:
     void extendBuffer(int newBufLen);
