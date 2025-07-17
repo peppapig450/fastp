@@ -16,6 +16,9 @@ class Stats{
 public:
     enum class CurveKey: std::uint8_t { A, T, C, G, N, Mean, GC };
 
+    enum class BaseIndex : std::uint8_t { A = 0, T, C, G, N, Count };
+    static constexpr std::size_t BaseCount = static_cast<std::size_t>(BaseIndex::Count);
+
     static constexpr std::size_t InvalidIndex = std::numeric_limits<std::size_t>::max();
 
     static constexpr std::size_t QualityCurveSize = 5;
@@ -24,7 +27,6 @@ public:
 
     static auto qualityCurveIndex(CurveKey key) noexcept -> std::size_t;
     static auto contentCurveIndex(CurveKey key) noexcept -> std::size_t;
-
 
     // this @guessedCycles parameter should be calculated using the first several records
     Stats(Options* opt, bool isRead2 = false, int guessedCycles = 0, int bufferMargin = 1024);
@@ -66,13 +68,36 @@ public:
     static string list2string(double* list, int size);
     static string list2string(double* list, int size, long* coords);
     static string list2string(long* list, int size);
-    static int base2val(char base) noexcept;
+
+    // Static lookup array for base values
+    static constexpr std::array<signed char, 256> BaseValueLookup = {
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0,  -1, 2,  -1, -1, -1, 3,  -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, 1,  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    };
+    static auto base2val(char base) noexcept -> std::int8_t;
 
     // Base types for all count/statistics vectors
     using CountVector = std::vector<long>;
 
     // Compound types for per-base cycle data
-    static constexpr std::size_t BaseCount = 8;
+    static constexpr std::array<unsigned char, 256> BaseIndexLookup = {
+        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 0, 5, 2, 5, 5, 5, 3, 5, 5,
+        5, 5, 5, 5, 4, 5, 5, 5, 5, 5, 1, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+    };
+    static auto baseIndex(char base) noexcept -> std::size_t;
     using BaseArray = std::array<long, BaseCount>;
     using BaseCycleArray = std::array<CountVector, BaseCount>;
 
@@ -89,17 +114,8 @@ private:
     bool mIsRead2;
     long mReads;
     int mEvaluatedSeqLen;
-    /* 
-    why we use 8 here?
-    map A/T/C/G/N to 0~7 by their ASCII % 8:
-    'A' % 8 = 1
-    'T' % 8 = 4
-    'C' % 8 = 3
-    'G' % 8 = 7
-    'N' % 8 = 6
-    */
-    // TODO: replace this indexing system as it wastes memory
-    // TODO: using structs would likely improve cache locality for some of these
+
+    // Per-base statistics
     BaseCycleArray mCycleQ30Bases;
     BaseCycleArray mCycleQ20Bases;
     BaseCycleArray mCycleBaseContents;
