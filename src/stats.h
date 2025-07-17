@@ -29,6 +29,13 @@ public:
     // this @guessedCycles parameter should be calculated using the first several records
     Stats(Options* opt, bool isRead2 = false, int guessedCycles = 0, int bufferMargin = 1024);
     ~Stats() = default;
+
+    // Copy and move constructors/assignment operators
+    Stats(const Stats& other);
+    Stats(Stats&& other) noexcept;
+    auto operator=(const Stats& other) -> Stats&;
+    auto operator=(Stats&& other) noexcept -> Stats&;
+
     int getCycles();
     long getReads();
     long getBases();
@@ -44,13 +51,13 @@ public:
     void print();
     void summarize(bool forced = false);
     // a port of JSON report
-    void reportJson(ofstream& ofs, string padding);
+    void reportJson(ofstream& ofs, const string& padding);
     // a port of HTML report
-    void reportHtml(ofstream& ofs, string filteringType, string readName);
-    void reportHtmlQuality(ofstream& ofs, string filteringType, string readName);
-    void reportHtmlContents(ofstream& ofs, string filteringType, string readName);
-    void reportHtmlKMER(ofstream& ofs, string filteringType, string readName);
-    void reportHtmlORA(ofstream& ofs, string filteringType, string readName);
+    void reportHtml(ofstream& ofs, const string& filteringType, const string& readName);
+    void reportHtmlQuality(ofstream& ofs, const string& filteringType, const string& readName);
+    void reportHtmlContents(ofstream& ofs, const string& filteringType, const string& readName);
+    void reportHtmlKMER(ofstream& ofs, const string& filteringType, const string& readName);
+    void reportHtmlORA(ofstream& ofs, const string& filteringType, const string& readName);
     bool isLongRead();
     void initOverRepSeq();
     int getMeanLength();
