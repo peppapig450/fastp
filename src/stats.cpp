@@ -2,6 +2,8 @@
 #include <memory.h>
 #include <algorithm>
 #include <array>
+#include <cstddef>
+#include <cstring>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -10,7 +12,28 @@
 
 #define KMER_LEN 5
 
-// TODO: this is doing way too much, clean it up.
+static const std::array<Stats::CurveKey, Stats::QualityCurveSize> QualityOrder = {Stats::CurveKey::A,
+                                                                                  Stats::CurveKey::T,
+                                                                                  Stats::CurveKey::C,
+                                                                                  Stats::CurveKey::G,
+                                                                                  Stats::CurveKey::Mean};
+
+static const std::array<Stats::CurveKey, Stats::ContentCurveSize> ContentOrder = {Stats::CurveKey::A,
+                                                                                  Stats::CurveKey::T,
+                                                                                  Stats::CurveKey::C,
+                                                                                  Stats::CurveKey::G,
+                                                                                  Stats::CurveKey::GC};
+
+static const std::array<const char*, Stats::QualityCurveSize> QualityNames = {"A", "T", "C", "G", "mean"};
+
+static const std::array<const char*, Stats::ContentCurveSize> ContentNames = {"A", "T", "C", "G", "N", "GC"};
+
+static const std::array<std::size_t, Stats::CurveIndexSize> QualityIndex =
+    {0, 1, 2, 3, Stats::InvalidIndex, 4, Stats::InvalidIndex};
+
+static const std::array<std::size_t, Stats::CurveIndexSize> ContentIndex = {0, 1, 2, 3, 4, Stats::InvalidIndex, 5};
+
+// TODO: this is doing way too much, clean it up,
 // We should use direct initialization syntax
 Stats::Stats(Options* opt, bool isRead2, int guessedCycles, int bufferMargin){
     mOptions = opt;
@@ -281,6 +304,14 @@ auto Stats::base2val(char base) noexcept -> int {
     }();
 
     return base_to_value_lookup[static_cast<unsigned char>(base)];
+}
+
+auto Stats::qualityCurveIndex(CurveKey key) noexcept -> std::size_t {
+    return QualityIndex[static_cast<std::size_t>(key)];
+}
+
+auto Stats::contentCurveIndex(CurveKey key) noexcept -> std::size_t {
+    return ContentIndex[static_cast<std::size_t>(key)];
 }
 
 int Stats::getCycles() {

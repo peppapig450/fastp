@@ -3,6 +3,8 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -12,6 +14,18 @@
 
 class Stats{
 public:
+    enum class CurveKey: std::uint8_t { A, T, C, G, N, Mean, GC };
+
+    static constexpr std::size_t InvalidIndex = std::numeric_limits<std::size_t>::max();
+
+    static constexpr std::size_t QualityCurveSize = 5;
+    static constexpr std::size_t ContentCurveSize = 6;
+    static constexpr std::size_t CurveIndexSize   = 7;
+
+    static auto qualityCurveIndex(CurveKey key) noexcept -> std::size_t;
+    static auto contentCurveIndex(CurveKey key) noexcept -> std::size_t;
+
+
     // this @guessedCycles parameter should be calculated using the first several records
     Stats(Options* opt, bool isRead2 = false, int guessedCycles = 0, int bufferMargin = 1024);
     ~Stats() = default;
