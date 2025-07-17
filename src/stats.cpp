@@ -141,16 +141,18 @@ void Stats::summarize(bool forced) {
     for(int c=0; c<mCycles; c++) {
         meanQualCurve[c] = (double)mCycleTotalQual[c] / (double)mCycleTotalBase[c];
     }
-    mQualityCurves["mean"] = meanQualCurve;
 
     // quality curves and base content curves for different nucleotides
-    char alphabets[5] = {'A', 'T', 'C', 'G', 'N'};
-    for(int i=0; i<5; i++) {
-        char base = alphabets[i];
-        // get last 3 bits
+    constexpr std::size_t BaseCount = Stats::QualityCurveSize - 1;
+    for (std::size_t i = 0; i < BaseCount; i++) {
+        const auto& key = QualityOrder[i];
+        char base = QualityNames[i][0]; // "A", "T", "C", "G"
+        // Get last 3 bits
         char b = base & 0x07;
+
         std::vector<double> qualCurve(mCycles);
         std::vector<double> contentCurve(mCycles);
+
         for(int c=0; c<mCycles; c++) {
             if(mCycleBaseContents[b][c] == 0)
                 qualCurve[c] = meanQualCurve[c];
@@ -158,9 +160,10 @@ void Stats::summarize(bool forced) {
                 qualCurve[c] = (double)mCycleBaseQual[b][c] / (double)mCycleBaseContents[b][c];
             contentCurve[c] = (double)mCycleBaseContents[b][c] / (double)mCycleTotalBase[c];
         }
-        mQualityCurves[string(1, base)] = qualCurve;
-        mContentCurves[string(1, base)] = contentCurve;
+        mQualityCurves[qualityCurveIndex(key)] = std::move(qualCurve);
+        mContentCurves[contentCurveIndex(key)] = std::move(contentCurve);
     }
+    mQualityCurves[qualityCurveIndex(CurveKey::Mean)] = std::move(meanQualCurve);
 
     // GC content curve
     std::vector<double> gcContentCurve(mCycles);
@@ -169,7 +172,7 @@ void Stats::summarize(bool forced) {
     for(int c=0; c<mCycles; c++) {
         gcContentCurve[c] = (double)(mCycleBaseContents[gBase][c] + mCycleBaseContents[cBase][c]) / (double)mCycleTotalBase[c];
     }
-    mContentCurves["GC"] = gcContentCurve;
+    mContentCurves[contentCurveIndex(CurveKey::GC)] = std::move(gcContentCurve);
 
     auto minmax = std::minmax_element(mKmer.begin(), mKmer.end());
     mKmerMin = *minmax.first;
