@@ -385,33 +385,38 @@ void Stats::reportJson(ofstream& ofs, string padding) {
     ofs << padding << "\t" << "\"total_cycles\": " << mCycles << "," << endl;
 
     // quality curves
-    string qualNames[5] = {"A", "T", "C", "G", "mean"};
     ofs << padding << "\t" << "\"quality_curves\": {" << endl;
-    for(int i=0 ;i<5; i++) {
-        string name=qualNames[i];
-        const std::vector<double>& curve = mQualityCurves[name]; // Maybe rename this?
+
+    // TODO: these two loops over QualityOrder and ContentOrder can probably be DRY'd
+    for (const auto key : QualityOrder) {
+        const auto curveIndex = qualityCurveIndex(key);
+        const auto& curve = mQualityCurves[curveIndex];
+        const auto* name = QualityNames[curveIndex]; // A helper for this might be useful
+
         ofs << padding << "\t\t" << "\"" << name << "\":[";
-        const auto curve_size = curve.size();
-        for(std::size_t c = 0; c < curve_size; c++) {
+        const auto curveSize = curve.size();
+        for(std::size_t c = 0; c < curveSize; c++) {
             ofs << curve[c];
             // not the end
-            if(c != curve_size - 1)
+            if(c - 1 != curveSize)
                 ofs << ",";
         }
         ofs << "]";
         // not the end;
-        if(i != 5-1)
+        if(key != QualityOrder.back())
             ofs << ",";
-        ofs << endl; 
+        ofs << endl;
     }
     ofs << padding << "\t" << "}," << endl;
 
     // content curves
-    string contentNames[6] = {"A", "T", "C", "G", "N", "GC"};
     ofs << padding << "\t" << "\"content_curves\": {" << endl;
-    for(int i=0 ;i<6; i++) {
-        string name=contentNames[i];
-        const std::vector<double>& curve = mContentCurves[name];
+
+    for (const auto key : ContentOrder) {
+        const auto curveIndex = contentCurveIndex(key);
+        const auto& curve = mContentCurves[curveIndex];
+        const auto* name = ContentNames[curveIndex];
+
         ofs << padding << "\t\t" << "\"" << name << "\":[";
         const auto curve_size = curve.size();
         for(std::size_t c = 0; c < curve_size; c++) {
@@ -422,7 +427,7 @@ void Stats::reportJson(ofstream& ofs, string padding) {
         }
         ofs << "]";
         // not the end;
-        if(i != 6-1)
+        if(key != ContentOrder.back())
             ofs << ",";
         ofs << endl; 
     }
@@ -724,7 +729,6 @@ void Stats::reportHtmlQuality(ofstream& ofs, string filteringType, string readNa
     ofs << "<div class='figure' id='plot_" + divName + "'></div>\n";
     ofs << "</div>\n";
     
-    string alphabets[5] = {"A", "T", "C", "G", "mean"};
     string colors[5] = {"rgba(128,128,0,1.0)", "rgba(128,0,128,1.0)", "rgba(0,255,0,1.0)", "rgba(0,0,255,1.0)", "rgba(20,20,20,1.0)"};
     ofs << "\n<script type=\"text/javascript\">" << endl;
     string json_str = "var data=[";
@@ -760,14 +764,17 @@ void Stats::reportHtmlQuality(ofstream& ofs, string filteringType, string readNa
         }
     }
     // four bases
-    for (int b = 0; b<5; b++) {
-        string base = alphabets[b];
+    for (auto key : QualityOrder) {
+        const auto curveIndex = qualityCurveIndex(key);
+        const auto* base = QualityNames[curveIndex];
+
         json_str += "{";
         json_str += "x:[" + list2string(x, total) + "],";
-        json_str += "y:[" + list2string(mQualityCurves[base].data(), total, x) + "],";
-        json_str += "name: '" + base + "',";
+        json_str += "y:[" + list2string(mQualityCurves[curveIndex].data(), total, x) + "],";
+        json_str += "name: '" + std::string(base) + "',";
         json_str += "mode:'lines',";
-        json_str += "line:{color:'" + colors[b] + "', width:1}\n";
+        // colors uses the same indexing as QualityNames so we can reuse the curve's index
+        json_str += "line:{color:'" + colors[curveIndex] + "', width:1}\n";
         json_str += "},";
     }
     json_str += "];\n";
@@ -799,7 +806,6 @@ void Stats::reportHtmlContents(ofstream& ofs, string filteringType, string readN
     ofs << "<div class='figure' id='plot_" + divName + "'></div>\n";
     ofs << "</div>\n";
     
-    string alphabets[6] = {"A", "T", "C", "G", "N", "GC"};
     string colors[6] = {"rgba(128,128,0,1.0)", "rgba(128,0,128,1.0)", "rgba(0,255,0,1.0)", "rgba(0,0,255,1.0)", "rgba(255, 0, 0, 1.0)", "rgba(20,20,20,1.0)"};
     ofs << "\n<script type=\"text/javascript\">" << endl;
     string json_str = "var data=[";
@@ -835,26 +841,29 @@ void Stats::reportHtmlContents(ofstream& ofs, string filteringType, string readN
         }
     }
     // four bases
-    for (int b = 0; b<6; b++) {
-        string base = alphabets[b];
+    for (const auto key : ContentOrder) {
+        const auto curveIndex = contentCurveIndex(key);
+        const auto* baseName = ContentNames[curveIndex];
+
         long count = 0;
-        if(base.size()==1) {
-            char b = base[0] & 0x07;
-            count = mBaseContents[b];
+        if (std::strlen(baseName) == 1) {
+            unsigned char bb = static_cast<unsigned char>(baseName[0]) & 0x07;
+            count = mBaseContents[bb];
         } else {
             count = mBaseContents['G' & 0x07] + mBaseContents['C' & 0x07] ;
         }
-        string percentage = to_string((double)count * 100.0 / mBases);
+
+        string percentage = std::to_string(static_cast<double>(count) * 100.0 / mBases);
         if(percentage.length()>5)
             percentage = percentage.substr(0,5);
-        string name = base + "(" + percentage + "%)"; 
+        string name = std::string(baseName) + "(" + percentage + "%)";
 
         json_str += "{";
         json_str += "x:[" + list2string(x, total) + "],";
-        json_str += "y:[" + list2string(mContentCurves[base].data(), total, x) + "],";
+        json_str += "y:[" + list2string(mContentCurves[curveIndex].data(), total, x) + "],";
         json_str += "name: '" + name + "',";
         json_str += "mode:'lines',";
-        json_str += "line:{color:'" + colors[b] + "', width:1}\n";
+        json_str += "line:{color:'" + colors[curveIndex] + "', width:1}\n";
         json_str += "},";
     }
     json_str += "];\n";
