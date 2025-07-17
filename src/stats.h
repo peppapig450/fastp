@@ -105,8 +105,8 @@ private:
     // Replace with const?
     std::array<long, 128> mBaseQualHistogram{}; // Initializing at construction like this is preferred
 
-    std::unordered_map<string, std::vector<double>> mQualityCurves;
-    std::unordered_map<string, std::vector<double>> mContentCurves;
+    std::array<std::vector<double>, QualityCurveSize> mQualityCurves;
+    std::array<std::vector<double>, ContentCurveSize> mContentCurves;
     std::unordered_map<string, long> mOverRepSeq;
     std::unordered_map<string, std::vector<long>> mOverRepSeqDist;
 
