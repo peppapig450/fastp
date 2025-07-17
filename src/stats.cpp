@@ -374,7 +374,7 @@ void Stats::print() {
     cerr << "Q40 bases: " << mQ40Total << "(" << (mQ40Total*100.0)/mBases << "%)" << endl;
 }
 
-void Stats::reportJson(ofstream& ofs, string padding) {
+void Stats::reportJson(ofstream& ofs, const string& padding) {
     ofs << "{" << endl;
 
     ofs << padding << "\t" << "\"total_reads\": " << mReads << "," << endl;
@@ -517,7 +517,7 @@ string Stats::list2string(long* list, int size) {
     return ss.str();
 }
 
-void Stats::reportHtml(ofstream& ofs, string filteringType, string readName) {
+void Stats::reportHtml(ofstream& ofs, const string& filteringType, const string& readName) {
     reportHtmlQuality(ofs, filteringType, readName);
     reportHtmlContents(ofs, filteringType, readName);
     reportHtmlKMER(ofs, filteringType, readName);
@@ -542,7 +542,7 @@ bool Stats::overRepPassed(string& seq, long count) {
     }
 }
 
-void Stats::reportHtmlORA(ofstream& ofs, string filteringType, string readName) {
+void Stats::reportHtmlORA(ofstream& ofs, const string& filteringType, const string& readName) {
     // over represented seqs
     double dBases = mBases;
     std::unordered_map<string, long>::iterator iter;
@@ -631,7 +631,7 @@ bool Stats::isLongRead() {
     return mCycles > 300;
 }
 
-void Stats::reportHtmlKMER(ofstream& ofs, string filteringType, string readName) {
+void Stats::reportHtmlKMER(ofstream& ofs, const string& filteringType, const string& readName) {
 
     // KMER
     string subsection = filteringType + ": " + readName + ": KMER counting";
@@ -715,7 +715,7 @@ string Stats::kmer2(int val) {
     return ret;
 }
 
-void Stats::reportHtmlQuality(ofstream& ofs, string filteringType, string readName) {
+void Stats::reportHtmlQuality(ofstream& ofs, const string& filteringType, const string& readName) {
 
     // quality
     string subsection = filteringType + ": " + readName + ": quality";
@@ -792,7 +792,7 @@ void Stats::reportHtmlQuality(ofstream& ofs, string filteringType, string readNa
     delete[] x;
 }
 
-void Stats::reportHtmlContents(ofstream& ofs, string filteringType, string readName) {
+void Stats::reportHtmlContents(ofstream& ofs, const string& filteringType, const string& readName) {
 
     // content
     string subsection = filteringType + ": " + readName + ": base contents";
