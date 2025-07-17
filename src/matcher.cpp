@@ -153,9 +153,9 @@ auto Matcher::matchWithOneInsertionImpl(const char *insertionData,
     UNROLL_LOOP(8)
     for (int i = lastIndex - 1; i >= 0; --i) {
         const auto nextIndex = i + 1;
-        rightMismatches[i] = rightMismatches[i + 1] + static_cast<int>(insertionData[i + 1] != normalData[i]);
+        rightMismatches[i] = rightMismatches[nextIndex] + static_cast<int>(insertionData[nextIndex] != normalData[i]);
         if (UNLIKELY_BRANCH(rightMismatches[i] + leftEdgeMismatch > diffLimit)) {
-            minValidRight = i + 1;
+            minValidRight = nextIndex;
             rightExceeded = true;
             break;
         }
@@ -241,10 +241,11 @@ auto Matcher::diffWithOneInsertionImpl(const char *insertionData,
     // Process backward only until we find invalid positions
     const auto leftMatchesEdge = leftMismatches[0];
     for (int i = lastIndex - 1; i >= 0; --i) {
-        rightMismatches[i] = rightMismatches[i + 1] + ((insertionData[i + 1] != normalData[i]) ? 1 : 0);
+        const auto nextIndex = i + 1;
+        rightMismatches[i] = rightMismatches[nextIndex] + ((insertionData[nextIndex] != normalData[i]) ? 1 : 0);
 
         if (UNLIKELY_BRANCH(rightMismatches[i] + leftMatchesEdge > diffLimit)) {
-            minValidRight = i + 1;
+            minValidRight = nextIndex;
             rightExceeded = true;
             // Instead of filling array, just mark the boundary
             break;
