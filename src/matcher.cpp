@@ -26,7 +26,7 @@
 // Per compiler macros for unrolling N iterations of a loop
 #ifndef UNROLL_LOOP
     #if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
-        // Clang of ICX (Intel LLVM-based compiler)
+        // Clang or ICX (Intel LLVM-based compiler)
         #define UNROLL_LOOP(N) _Pragma(TOSTRING(clang loop unroll_count(N)))
     #elif defined(__INTEL_COMPILER)
         // ICC classic (non-LLVM)
@@ -153,9 +153,9 @@ auto Matcher::matchWithOneInsertionImpl(const char *insertionData,
     UNROLL_LOOP(8)
     for (int i = lastIndex - 1; i >= 0; --i) {
         const auto nextIndex = i + 1;
-        rightMismatches[i] = rightMismatches[i + 1] + static_cast<int>(insertionData[i + 1] != normalData[i]);
+        rightMismatches[i] = rightMismatches[nextIndex] + static_cast<int>(insertionData[nextIndex] != normalData[i]);
         if (UNLIKELY_BRANCH(rightMismatches[i] + leftEdgeMismatch > diffLimit)) {
-            minValidRight = i + 1;
+            minValidRight = nextIndex;
             rightExceeded = true;
             break;
         }
@@ -241,10 +241,11 @@ auto Matcher::diffWithOneInsertionImpl(const char *insertionData,
     // Process backward only until we find invalid positions
     const auto leftMatchesEdge = leftMismatches[0];
     for (int i = lastIndex - 1; i >= 0; --i) {
-        rightMismatches[i] = rightMismatches[i + 1] + ((insertionData[i + 1] != normalData[i]) ? 1 : 0);
+        const auto nextIndex = i + 1;
+        rightMismatches[i] = rightMismatches[nextIndex] + ((insertionData[nextIndex] != normalData[i]) ? 1 : 0);
 
         if (UNLIKELY_BRANCH(rightMismatches[i] + leftMatchesEdge > diffLimit)) {
-            minValidRight = i + 1;
+            minValidRight = nextIndex;
             rightExceeded = true;
             // Instead of filling array, just mark the boundary
             break;
