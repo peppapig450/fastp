@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <sstream>
 #include <string>
@@ -33,6 +34,9 @@ static const std::array<std::size_t, Stats::CurveIndexSize> QualityIndex =
 
 static const std::array<std::size_t, Stats::CurveIndexSize> ContentIndex = {0, 1, 2, 3, 4, Stats::InvalidIndex, 5};
 
+constexpr std::array<unsigned char, 256> Stats::BaseIndexLookup;
+constexpr std::array<signed char, 256> Stats::BaseValueLookup;
+
 // TODO: this is doing way too much, clean it up,
 // We should use direct initialization syntax
 Stats::Stats(Options* opt, bool isRead2, int guessedCycles, int bufferMargin){
@@ -61,14 +65,14 @@ Stats::Stats(Options* opt, bool isRead2, int guessedCycles, int bufferMargin){
     // extend the buffer to make sure it's long enough
     mBufLen = guessedCycles + bufferMargin;
 
-    for(int i=0; i<8; i++){
+    for (std::size_t i = 0; i < Stats::BaseCount; i++) {
         mQ20Bases[i] = 0;
         mQ30Bases[i] = 0;
         mBaseContents[i] = 0;
 
         // TODO: the mBufLen approach probably is not needed with STL containers look into it
 
-        // This will look difference once direct initialization syntax is used as we can use the 
+        // This will look different once direct initialization syntax is used as we can use the 
         // type alias we defined in the header.
         mCycleQ30Bases[i].assign(mBufLen, 0);
         mCycleQ20Bases[i].assign(mBufLen, 0);
@@ -91,7 +95,7 @@ void Stats::extendBuffer(int newBufLen) {
         return;
     }
 
-    for (int i=0; i<8; i++) {
+    for (std::size_t i = 0; i < Stats::BaseCount; i++) {
         mCycleQ30Bases[i].resize(newBufLen, 0);
         mCycleQ20Bases[i].resize(newBufLen, 0);
         mCycleBaseContents[i].resize(newBufLen, 0);
@@ -121,7 +125,7 @@ void Stats::summarize(bool forced) {
     }
 
     // Q20, Q30, base content
-    for(int i=0; i<8; i++) {
+    for (std::size_t i = 0; i < Stats::BaseCount; i++) {
         for(int c=0; c<mCycles; c++) {
             mQ20Bases[i] += mCycleQ20Bases[i][c];
             mQ30Bases[i] += mCycleQ30Bases[i][c];
@@ -147,18 +151,17 @@ void Stats::summarize(bool forced) {
     for (std::size_t i = 0; i < BaseCount; i++) {
         const auto& key = QualityOrder[i];
         char base = QualityNames[i][0]; // "A", "T", "C", "G"
-        // Get last 3 bits
-        char b = base & 0x07;
+        std::size_t baseIdx = baseIndex(base);
 
         std::vector<double> qualCurve(mCycles);
         std::vector<double> contentCurve(mCycles);
 
         for(int c=0; c<mCycles; c++) {
-            if(mCycleBaseContents[b][c] == 0)
+            if(mCycleBaseContents[baseIdx][c] == 0)
                 qualCurve[c] = meanQualCurve[c];
             else
-                qualCurve[c] = (double)mCycleBaseQual[b][c] / (double)mCycleBaseContents[b][c];
-            contentCurve[c] = (double)mCycleBaseContents[b][c] / (double)mCycleTotalBase[c];
+                qualCurve[c] = (double)mCycleBaseQual[baseIdx][c] / (double)mCycleBaseContents[baseIdx][c];
+            contentCurve[c] = (double)mCycleBaseContents[baseIdx][c] / (double)mCycleTotalBase[c];
         }
         mQualityCurves[qualityCurveIndex(key)] = std::move(qualCurve);
         mContentCurves[contentCurveIndex(key)] = std::move(contentCurve);
@@ -167,8 +170,9 @@ void Stats::summarize(bool forced) {
 
     // GC content curve
     std::vector<double> gcContentCurve(mCycles);
-    char gBase = 'G' & 0x07;
-    char cBase = 'C' & 0x07;
+    auto gBase = baseIndex('G');
+    auto cBase = baseIndex('C');
+
     for(int c=0; c<mCycles; c++) {
         gcContentCurve[c] = (double)(mCycleBaseContents[gBase][c] + mCycleBaseContents[cBase][c]) / (double)mCycleTotalBase[c];
     }
@@ -194,33 +198,32 @@ void Stats::statRead(Read* r) {
     mLengthSum += len;
 
     if(mBufLen < len) {
-        extendBuffer(max(len + 100, (int)(len * 1.5)));
+        extendBuffer(std::max(len + 100, (int)(len * 1.5)));
     }
     const char* seqstr = r->mSeq->c_str();
     const char* qualstr = r->mQuality->c_str();
 
     int kmer = 0;
     bool needFullCompute = true;
+    const char q20 = '5';
+    const char q30 = '?';
+
     for(int i=0; i<len; i++) {
         char base = seqstr[i];
         char qual = qualstr[i];
-        // get last 3 bits
-        char b = base & 0x07;
-
-        const char q20 = '5';
-        const char q30 = '?';
+        const auto baseIdx = baseIndex(base);
 
         mBaseQualHistogram[qual]++;
 
         if(qual >= q30) {
-            mCycleQ30Bases[b][i]++;
-            mCycleQ20Bases[b][i]++;
+            mCycleQ30Bases[baseIdx][i]++;
+            mCycleQ20Bases[baseIdx][i]++;
         } else if(qual >= q20) {
-            mCycleQ20Bases[b][i]++;
+            mCycleQ20Bases[baseIdx][i]++;
         }
 
-        mCycleBaseContents[b][i]++;
-        mCycleBaseQual[b][i] += (qual-33);
+        mCycleBaseContents[baseIdx][i]++;
+        mCycleBaseQual[baseIdx][i] += (qual-33);
 
         mCycleTotalBase[i]++;
         mCycleTotalQual[i] += (qual-33);
@@ -270,7 +273,7 @@ void Stats::statRead(Read* r) {
     // do overrepresentation analysis for 1 of every 100 reads
     if(mOptions->overRepAnalysis.enabled) {
         if(mReads % mOptions->overRepAnalysis.sampling == 0) {
-            const int steps[5] = {10, 20, 40, 100, min(150, mEvaluatedSeqLen-2)};
+            const int steps[5] = {10, 20, 40, 100, std::min(150, mEvaluatedSeqLen-2)};
             for(int s=0; s<5; s++) {
                 int step = steps[s];
                 for(int i=0; i<len-step; i++) {
@@ -290,23 +293,12 @@ void Stats::statRead(Read* r) {
     mReads++;
 }
 
-auto Stats::base2val(char base) noexcept -> int {
-    // Static lookup table initialized once using a lambda expression.
-    // The `[]() { ... }()` syntax defines an immediately-invoked lambda expression (IEFE).
-    // This allows us to fill and return the lookup table in a single expression,
-    // and ensures the initialization happens only once in a thread safe manner.
-    static const std::array<signed char, 256> base_to_value_lookup = []() {
-        std::array<signed char, 256> lookup_table;
+auto Stats::base2val(char base) noexcept -> std::int8_t {
+    return BaseValueLookup[static_cast<signed char>(base)];
+}
 
-        lookup_table.fill(-1);  // Default all values to -1 (invalid base)
-        lookup_table['A'] = 0;
-        lookup_table['T'] = 1;
-        lookup_table['C'] = 2;
-        lookup_table['G'] = 3;
-        return lookup_table;
-    }();
-
-    return base_to_value_lookup[static_cast<unsigned char>(base)];
+auto Stats::baseIndex(char base) noexcept -> std::size_t {
+    return BaseIndexLookup[static_cast<unsigned char>(base)];
 }
 
 auto Stats::qualityCurveIndex(CurveKey key) noexcept -> std::size_t {
@@ -360,7 +352,7 @@ auto Stats::getQualHist() const -> const std::array<long, 128>& {
 long Stats::getGCNumber() {
     if(!summarized)
         summarize();
-    return mBaseContents['G' & 0x07] + mBaseContents['C' & 0x07];
+    return mBaseContents[baseIndex('G')] + mBaseContents[baseIndex('C')];
 }
 
 void Stats::print() {
@@ -847,10 +839,12 @@ void Stats::reportHtmlContents(ofstream& ofs, const string& filteringType, const
 
         long count = 0;
         if (std::strlen(baseName) == 1) {
-            unsigned char bb = static_cast<unsigned char>(baseName[0]) & 0x07;
-            count = mBaseContents[bb];
+            const auto bb =  baseIndex(baseName[0]);
+            if (bb < Stats::BaseCount) {
+                count = mBaseContents[bb];
+            }
         } else {
-            count = mBaseContents['G' & 0x07] + mBaseContents['C' & 0x07] ;
+            count = mBaseContents[baseIndex('G')] + mBaseContents[baseIndex('C')];
         }
 
         string percentage = std::to_string(static_cast<double>(count) * 100.0 / mBases);
@@ -904,7 +898,7 @@ Stats* Stats::merge(vector<Stats*>& list) {
         s->mLengthSum += list[t]->mLengthSum;
 
         // merge per cycle counting for different bases
-        for (int i=0; i<8; i++) {
+        for (std::size_t i = 0; i < Stats::BaseCount; i++) {
             std::size_t sizeA = s->mCycleQ30Bases[i].size();
             std::size_t sizeB = list[t]->mCycleQ30Bases[i].size();
             std::size_t limit =
