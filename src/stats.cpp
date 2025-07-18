@@ -215,12 +215,11 @@ void Stats::statRead(Read* r) {
 
         mBaseQualHistogram[qual]++;
 
-        if(qual >= q30) {
-            mCycleQ30Bases[baseIdx][i]++;
-            mCycleQ20Bases[baseIdx][i]++;
-        } else if(qual >= q20) {
-            mCycleQ20Bases[baseIdx][i]++;
-        }
+        const int isQ20 = (qual >= q20) ? 1 : 0;
+        const int isQ30 = (qual >= q30) ? 1 : 0;
+        
+        mCycleQ20Bases[baseIdx][i] += isQ20;
+        mCycleQ30Bases[baseIdx][i] += isQ30;
 
         mCycleBaseContents[baseIdx][i]++;
         mCycleBaseQual[baseIdx][i] += (qual-33);
