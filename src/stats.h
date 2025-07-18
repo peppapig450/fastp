@@ -99,7 +99,7 @@ public:
     };
     static auto baseIndex(char base) noexcept -> std::size_t;
     using BaseArray = std::array<long, BaseCount>;
-    using BaseCycleArray = std::array<CountVector, BaseCount>;
+    using BaseCycleArray = std::vector<long>;
 
 private:
     void extendBuffer(int newBufLen);
@@ -125,7 +125,7 @@ private:
     CountVector mCycleTotalQual;
     CountVector mKmer;
 
-    // Replace with const?
+    //TODO: Replace with const?
     std::array<long, 128> mBaseQualHistogram{}; // Initializing at construction like this is preferred
 
     std::array<std::vector<double>, QualityCurveSize> mQualityCurves;

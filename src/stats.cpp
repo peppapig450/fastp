@@ -69,16 +69,13 @@ Stats::Stats(Options* opt, bool isRead2, int guessedCycles, int bufferMargin){
         mQ20Bases[i] = 0;
         mQ30Bases[i] = 0;
         mBaseContents[i] = 0;
-
-        // TODO: the mBufLen approach probably is not needed with STL containers look into it
-
-        // This will look different once direct initialization syntax is used as we can use the 
-        // type alias we defined in the header.
-        mCycleQ30Bases[i].assign(mBufLen, 0);
-        mCycleQ20Bases[i].assign(mBufLen, 0);
-        mCycleBaseContents[i].assign(mBufLen, 0);
-        mCycleBaseQual[i].assign(mBufLen, 0);
     }
+
+    auto totalSize = Stats::BaseCount * static_cast<std::size_t>(mBufLen);
+    mCycleQ30Bases.assign(totalSize, 0);
+    mCycleQ20Bases.assign(totalSize, 0);
+    mCycleBaseContents.assign(totalSize, 0);
+    mCycleBaseQual.assign(totalSize, 0);
 
     mCycleTotalBase.assign(mBufLen, 0);
     mCycleTotalQual.assign(mBufLen, 0);
@@ -95,12 +92,24 @@ void Stats::extendBuffer(int newBufLen) {
         return;
     }
 
-    for (std::size_t i = 0; i < Stats::BaseCount; i++) {
-        mCycleQ30Bases[i].resize(newBufLen, 0);
-        mCycleQ20Bases[i].resize(newBufLen, 0);
-        mCycleBaseContents[i].resize(newBufLen, 0);
-        mCycleBaseQual[i].resize(newBufLen, 0);
-    }
+    const auto oldLen = static_cast<std::size_t>(mBufLen);
+    const auto newSize = Stats::BaseCount * static_cast<std::size_t>(newBufLen);
+
+    auto resizeFlat = [&](BaseCycleArray& arr) {
+        BaseCycleArray newArr(newSize, 0);
+        for (std::size_t baseIdx = 0; baseIdx < Stats::BaseCount; ++baseIdx) {
+            for (std::size_t i = 0; i < oldLen; ++i) {
+                newArr[(baseIdx * newBufLen) + i] = arr[(baseIdx * mBufLen) + i];
+            }
+        }
+        arr.swap(newArr);
+    };
+
+    resizeFlat(mCycleQ30Bases);
+    resizeFlat(mCycleQ20Bases);
+    resizeFlat(mCycleBaseContents);
+    resizeFlat(mCycleBaseQual);
+
     mCycleTotalBase.resize(newBufLen, 0);
     mCycleTotalQual.resize(newBufLen, 0);
 
@@ -127,9 +136,10 @@ void Stats::summarize(bool forced) {
     // Q20, Q30, base content
     for (std::size_t i = 0; i < Stats::BaseCount; i++) {
         for(int c=0; c<mCycles; c++) {
-            mQ20Bases[i] += mCycleQ20Bases[i][c];
-            mQ30Bases[i] += mCycleQ30Bases[i][c];
-            mBaseContents[i] += mCycleBaseContents[i][c];
+            const auto idx = i * mBufLen + c;
+            mQ20Bases[i] += mCycleQ20Bases[idx];
+            mQ30Bases[i] += mCycleQ30Bases[idx];
+            mBaseContents[i] += mCycleBaseContents[idx];
         }
         mQ20Total += mQ20Bases[i];
         mQ30Total += mQ30Bases[i];
@@ -156,12 +166,18 @@ void Stats::summarize(bool forced) {
         std::vector<double> qualCurve(mCycles);
         std::vector<double> contentCurve(mCycles);
 
-        for(int c=0; c<mCycles; c++) {
-            if(mCycleBaseContents[baseIdx][c] == 0)
-                qualCurve[c] = meanQualCurve[c];
-            else
-                qualCurve[c] = (double)mCycleBaseQual[baseIdx][c] / (double)mCycleBaseContents[baseIdx][c];
-            contentCurve[c] = (double)mCycleBaseContents[baseIdx][c] / (double)mCycleTotalBase[c];
+        const auto baseOffset = baseIdx * mBufLen;
+        for (int c = 0; c < mCycles; c++) {
+            const auto idx = baseOffset + c;
+            // TODO: consider reordering the else statement to be first if profiling shows this branch
+            // is hot.
+            if (mCycleBaseContents[idx] == 0) {
+                qualCurve[c] = meanQualCurve[c]; // TODO: can this be moved out the loop?
+            }
+            else {
+                qualCurve[c] = (double)mCycleBaseQual[idx] / (double)mCycleBaseContents[idx];
+            }
+            contentCurve[c] = (double)mCycleBaseContents[idx] / (double)mCycleTotalBase[c];
         }
         mQualityCurves[qualityCurveIndex(key)] = std::move(qualCurve);
         mContentCurves[contentCurveIndex(key)] = std::move(contentCurve);
@@ -173,8 +189,12 @@ void Stats::summarize(bool forced) {
     auto gBase = baseIndex('G');
     auto cBase = baseIndex('C');
 
+    const auto gOffset = gBase * mBufLen;
+    const auto cOffset = cBase * mBufLen;
     for(int c=0; c<mCycles; c++) {
-        gcContentCurve[c] = (double)(mCycleBaseContents[gBase][c] + mCycleBaseContents[cBase][c]) / (double)mCycleTotalBase[c];
+        const auto gIdx = gOffset + c;
+        const auto cIdx = cOffset + c;
+        gcContentCurve[c] = (double)(mCycleBaseContents[gIdx] + mCycleBaseContents[cIdx]) / (double)mCycleTotalBase[c];
     }
     mContentCurves[contentCurveIndex(CurveKey::GC)] = std::move(gcContentCurve);
 
@@ -218,11 +238,12 @@ void Stats::statRead(Read* r) {
         const int isQ20 = (qual >= q20) ? 1 : 0;
         const int isQ30 = (qual >= q30) ? 1 : 0;
         
-        mCycleQ20Bases[baseIdx][i] += isQ20;
-        mCycleQ30Bases[baseIdx][i] += isQ30;
+        const auto idx = (baseIdx * mBufLen) + i;
+        mCycleQ20Bases[idx] += isQ20;
+        mCycleQ30Bases[idx] += isQ30;
 
-        mCycleBaseContents[baseIdx][i]++;
-        mCycleBaseQual[baseIdx][i] += (qual-33);
+        mCycleBaseContents[idx]++;
+        mCycleBaseQual[idx] += (qual-33);
 
         mCycleTotalBase[i]++;
         mCycleTotalQual[i] += (qual-33);
@@ -896,25 +917,22 @@ Stats* Stats::merge(vector<Stats*>& list) {
         s->mReads += list[t]->mReads;
         s->mLengthSum += list[t]->mLengthSum;
 
+        const auto limit = std::min(static_cast<std::size_t>(cycles), static_cast<std::size_t>(curCycles));
         // merge per cycle counting for different bases
         for (std::size_t i = 0; i < Stats::BaseCount; i++) {
-            std::size_t sizeA = s->mCycleQ30Bases[i].size();
-            std::size_t sizeB = list[t]->mCycleQ30Bases[i].size();
-            std::size_t limit =
-                std::min({static_cast<std::size_t>(cycles), sizeA, sizeB, static_cast<std::size_t>(curCycles)});
 
             for (std::size_t j = 0; j < limit; j++) {
-                s->mCycleQ30Bases[i][j] += list[t]->mCycleQ30Bases[i][j];
-                s->mCycleQ20Bases[i][j] += list[t]->mCycleQ20Bases[i][j];
-                s->mCycleBaseContents[i][j] += list[t]->mCycleBaseContents[i][j];
-                s->mCycleBaseQual[i][j] += list[t]->mCycleBaseQual[i][j];
+                // TODO: we can move some of these pointers out of the loop as they're invariant
+                const auto dstIndex = (i * s->mBufLen) + j;
+                const auto srcIndex = (i * list[t]->mBufLen) + j;
+
+                s->mCycleQ30Bases[dstIndex] += list[t]->mCycleQ30Bases[srcIndex];
+                s->mCycleQ20Bases[dstIndex] += list[t]->mCycleQ20Bases[srcIndex];
+                s->mCycleBaseContents[dstIndex] += list[t]->mCycleBaseContents[srcIndex];
+                s->mCycleBaseQual[dstIndex] += list[t]->mCycleBaseQual[srcIndex];
             }
         }
 
-        size_t limit = std::min({static_cast<size_t>(cycles),
-                                 s->mCycleTotalBase.size(),
-                                 list[t]->mCycleTotalBase.size(),
-                                 static_cast<size_t>(curCycles)});
         // merge per cycle counting for all bases
         for (std::size_t j = 0; j < limit; j++) {
             s->mCycleTotalBase[j] += list[t]->mCycleTotalBase[j];
