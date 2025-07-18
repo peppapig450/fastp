@@ -57,7 +57,7 @@ FilterResult* FilterResult::merge(vector<FilterResult*>& list) {
         }
 
         // merge adapter stats
-        map<string, long>::iterator iter;
+        std::map<string, long, classcomp>::iterator iter;
         for(iter = list[i]->mAdapter1.begin(); iter != list[i]->mAdapter1.end(); iter++) {
             if(result->mAdapter1.count(iter->first) > 0)
                 result->mAdapter1[iter->first] += iter->second;
@@ -247,7 +247,7 @@ void FilterResult::reportJson(ofstream& ofs, string padding) {
 }
 
 void FilterResult::outputAdaptersJson(ofstream& ofs, map<string, long, classcomp>& adapterCounts) {
-    map<string, long>::iterator iter;
+    std::map<string, long, classcomp>::iterator iter;
 
     long total = 0;
     for(iter = adapterCounts.begin(); iter!=adapterCounts.end(); iter++) {
@@ -392,7 +392,7 @@ void FilterResult::reportAdapterHtml(ofstream& ofs, long totalBases) {
 }
 
 int FilterResult::getAdapterReportCount(map<string, long, classcomp>& adapterCounts) {
-    map<string, long>::iterator iter;
+    std::map<string, long, classcomp>::iterator iter;
     long total = 0;
     long totalAdapterBases = 0;
     for(iter = adapterCounts.begin(); iter!=adapterCounts.end(); iter++) {
@@ -413,8 +413,7 @@ int FilterResult::getAdapterReportCount(map<string, long, classcomp>& adapterCou
 }
 
 int FilterResult::outputAdaptersHtml(ofstream& ofs, map<string, long, classcomp>& adapterCounts, long totalBases, int limitCount) {
-
-    map<string, long>::iterator iter;
+    std::map<string, long, classcomp>::iterator iter;
 
     long total = 0;
     long totalAdapterBases = 0;
