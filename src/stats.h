@@ -94,24 +94,28 @@ public:
         std::size_t bases{0};
         std::size_t bufLen{0};
 
+        auto index(std::size_t cycle, std::size_t base) const noexcept -> std::size_t {
+            return (cycle * bases) + base;
+        }
+
       public:
         BaseCycleArray() = default;
-        BaseCycleArray(std::size_t base, std::size_t len) : data(base * len, 0), bases(base), bufLen(len) {}
+        BaseCycleArray(std::size_t base, std::size_t len) : data(len * base, 0), bases(base), bufLen(len) {}
 
-        auto operator()(std::size_t base, std::size_t cycle) -> long& { return data[(base * bufLen) + cycle]; }
+        auto operator()(std::size_t cycle, std::size_t base) -> long& { return data[index(cycle, base)]; }
 
-        auto operator()(std::size_t base, std::size_t cycle) const -> const long& {
-            return data[(base * bufLen) + cycle];
+        auto operator()(std::size_t cycle, std::size_t base) const -> const long& {
+            return data[index(cycle, base)];
         }
 
         void resize(std::size_t base, std::size_t newLen) {
-            std::vector<long> newData(base * newLen , 0);
+            std::vector<long> newData(newLen * base, 0);
             std::size_t minBase = std::min(base, bases);
             std::size_t minLen  = std::min(newLen, bufLen);
 
-            for (std::size_t baseIdx = 0; baseIdx < minBase; ++baseIdx) {
-                for (std::size_t cycleIdx = 0; cycleIdx < minLen; ++cycleIdx) {
-                    newData[(baseIdx * newLen) + cycleIdx] = (*this)(baseIdx, cycleIdx);
+            for (std::size_t cycleIdx = 0; cycleIdx < minLen; ++cycleIdx) {
+                for (std::size_t baseIdx = 0; baseIdx < minBase; ++baseIdx) {
+                    newData[(cycleIdx * base) + baseIdx] = (*this)(cycleIdx, baseIdx);
                 }
             }
 
@@ -121,6 +125,7 @@ public:
         }
 
         auto cycleLength() const -> std::size_t { return bufLen; }
+        auto baseCount() const -> std::size_t { return bases; }
 
         auto values() -> std::vector<long>& { return data; }
         auto values() const -> const std::vector<long>& { return data; }
