@@ -105,15 +105,13 @@ public:
         }
 
         void resize(std::size_t base, std::size_t newLen) {
-            const auto newSize = base * newLen;
-            std::vector<long> newData(newSize, 0);
-
+            std::vector<long> newData(base * newLen , 0);
             std::size_t minBase = std::min(base, bases);
-            std::size_t minLen = std::min(newLen, bufLen);
+            std::size_t minLen  = std::min(newLen, bufLen);
 
             for (std::size_t baseIdx = 0; baseIdx < minBase; ++baseIdx) {
                 for (std::size_t cycleIdx = 0; cycleIdx < minLen; ++cycleIdx) {
-                    newData[newSize + cycleIdx] = (*this)(baseIdx, cycleIdx);
+                    newData[(baseIdx * newLen) + cycleIdx] = (*this)(baseIdx, cycleIdx);
                 }
             }
 
