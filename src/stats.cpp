@@ -77,7 +77,7 @@ Stats::Stats(Options* opt, bool isRead2, int guessedCycles, int bufferMargin){
     mCycleTotalQual.assign(mBufLen, 0);
 
     // allocate k-mer counting buffer
-    mKmer.assign(KmerCount, 0);
+    mKmer.fill(0);
 
     initOverRepSeq();
 }
@@ -666,7 +666,7 @@ string Stats::makeKmerTD(int i, int j) {
     string first = kmer3(i);
     string last = kmer2(j);
     string kmer = first+last;
-    double meanBases = (double)(mBases+1) / mKmer.size();
+    double meanBases = (double)(mBases+1) / static_cast<double>(Stats::KmerCount);
     double prop = val / meanBases;
     double frac = 0.5;
     if(prop > 2.0) 
@@ -924,7 +924,7 @@ Stats* Stats::merge(vector<Stats*>& list) {
         }
 
         // merge kMer
-        for(std::size_t i = 0; i < s->mKmer.size(); i++) {
+        for(std::size_t i = 0; i < Stats::KmerCount; i++) {
             s->mKmer[i] += list[t]->mKmer[i];
         }
 

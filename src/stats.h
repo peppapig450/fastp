@@ -31,16 +31,17 @@ public:
     static constexpr std::size_t KmerLen   = 5;
     static constexpr std::size_t KmerCount = 1U << (2 * KmerLen);
     static constexpr std::size_t KmerMask  = KmerCount - 1;
+    using KmerArray = std::array<long, KmerCount>;
 
     // this @guessedCycles parameter should be calculated using the first several records
     Stats(Options* opt, bool isRead2 = false, int guessedCycles = 0, int bufferMargin = 1024);
     ~Stats() = default;
 
     // Copy and move constructors/assignment operators
-    Stats(const Stats& other);
-    Stats(Stats&& other) noexcept;
-    auto operator=(const Stats& other) -> Stats&;
-    auto operator=(Stats&& other) noexcept -> Stats&;
+    Stats(const Stats& other) = default;
+    Stats(Stats&& other) noexcept = default;
+    auto operator=(const Stats& other) -> Stats& = default;
+    auto operator=(Stats&& other) noexcept -> Stats& = default;
 
     int getCycles();
     long getReads();
@@ -171,7 +172,8 @@ private:
 
     CountVector mCycleTotalBase;
     CountVector mCycleTotalQual;
-    CountVector mKmer;
+
+    KmerArray mKmer;
 
     //TODO: Replace with const?
     std::array<long, 128> mBaseQualHistogram{}; // Initializing at construction like this is preferred
