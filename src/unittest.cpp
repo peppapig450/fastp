@@ -10,11 +10,9 @@
 #include "nucleotidetree.h"
 #include "evaluator.h"
 #include "matcher.h"
-#include <time.h>
+#include "stats.h"
 
-UnitTest::UnitTest(){
-
-}
+UnitTest::UnitTest()= default;
 
 void UnitTest::run(){
     bool passed = true;
@@ -28,6 +26,7 @@ void UnitTest::run(){
     passed &= report(PolyX::test(), "PolyX::test");
     passed &= report(Matcher::test(), "Matcher::test");
     passed &= report(NucleotideTree::test(), "NucleotideTree::test");
+    passed &= report(Stats::test(), "Stats::test");
     passed &= report(Evaluator::test(), "Evaluator::test");
     printf("\n==========================\n");
     printf("%s\n\n", passed?"ALL PASSED":"FAILED");

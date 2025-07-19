@@ -967,3 +967,53 @@ void Stats::initOverRepSeq() {
         mOverRepSeqDist[seq].assign(mEvaluatedSeqLen, 0);
     }
 }
+
+auto Stats::test() -> bool {
+    Options opt;
+    Stats   stats(&opt, false, 10);
+    Read    r("@kmer", "ATCGAATCGA", "+", "IIIIIIIIII");
+    stats.statRead(&r);
+    stats.summarize(true);
+
+    auto idx = [](const string& key) -> int {
+        unsigned int val = 0;
+        for (char ch : key) {
+            int base = Stats::base2val(ch);
+            if (base < 0) return -1;
+            // Shift val left by 2 bits to make space for the next base,
+            // mask with 0x3FC (binary 11 1111 1100) to keep only the last 10 bits (rolling window),
+            // then add the new base value in the lowest 2 bits.
+            val = ((val << 2) & static_cast<unsigned int>(0x3FC)) | static_cast<unsigned int>(base);
+        }
+        return static_cast<int>(val);
+    };
+
+    struct KeyVal {
+        const char* key;
+        int         value;
+    } expected[] = {
+        {"ATCGA", 2},
+        {"TCGAA", 1},
+        {"CGAAT", 1},
+        {"GAATC", 1},
+        {"AATCG", 1},
+    };
+
+    for (const auto& kvPair : expected) {
+        auto index = idx(kvPair.key);
+        if (index < 0 || stats.mKmer[index] != kvPair.value) {
+            return false;
+        }
+    }
+
+    auto none = idx("AAAAA");
+    if (none < 0 || stats.mKmer[none] != 0) {
+        return false;
+    }
+
+    if (stats.mKmerMax != 2 || stats.mKmerMin != 0) {
+        return false;
+    }
+
+    return true;
+}
