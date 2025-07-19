@@ -87,6 +87,44 @@ public:
     // Base types for all count/statistics vectors
     using CountVector = std::vector<long>;
 
+    // helper container for per-base per-cycle statistics
+    struct BaseCycleArray {
+      private:
+        std::vector<long> data;
+        std::size_t bases{0};
+        std::size_t bufLen{0};
+
+      public:
+        BaseCycleArray() = default;
+        BaseCycleArray(std::size_t base, std::size_t len) : data(base * len, 0), bases(base), bufLen(len) {}
+
+        auto operator()(std::size_t base, std::size_t cycle) -> long& { return data[(base * bufLen) + cycle]; }
+
+        auto operator()(std::size_t base, std::size_t cycle) const -> const long& {
+            return data[(base * bufLen) + cycle];
+        }
+
+        void resize(std::size_t base, std::size_t newLen) {
+            const auto newSize = base * newLen;
+            std::vector<long> newData(newSize, 0);
+
+            std::size_t minBase = std::min(base, bases);
+            std::size_t minLen = std::min(newLen, bufLen);
+
+            for (std::size_t baseIdx = 0; baseIdx < minBase; ++baseIdx) {
+                for (std::size_t cycleIdx = 0; cycleIdx < minLen; ++cycleIdx) {
+                    newData[newSize + cycleIdx] = (*this)(baseIdx, cycleIdx);
+                }
+            }
+
+            data.swap(newData);
+            bases = base;
+            bufLen = newLen;
+        }
+
+        auto cycleLength() const -> std::size_t { return bufLen; }
+    };
+
     // Compound types for per-base cycle data
     static constexpr std::array<unsigned char, 256> BaseIndexLookup = {
         5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
@@ -99,7 +137,6 @@ public:
     };
     static auto baseIndex(char base) noexcept -> std::size_t;
     using BaseArray = std::array<long, BaseCount>;
-    using BaseCycleArray = std::vector<long>;
 
 private:
     void extendBuffer(int newBufLen);
