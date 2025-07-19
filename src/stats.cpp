@@ -65,11 +65,9 @@ Stats::Stats(Options* opt, bool isRead2, int guessedCycles, int bufferMargin){
     // extend the buffer to make sure it's long enough
     mBufLen = guessedCycles + bufferMargin;
 
-    for (std::size_t i = 0; i < Stats::BaseCount; i++) {
-        mQ20Bases[i] = 0;
-        mQ30Bases[i] = 0;
-        mBaseContents[i] = 0;
-    }
+    mQ20Bases.fill(0);
+    mQ30Bases.fill(0);
+    mBaseContents.fill(0);
 
     mCycleQ30Bases.resize(Stats::BaseCount, mBufLen);
     mCycleQ20Bases.resize(Stats::BaseCount, mBufLen);
