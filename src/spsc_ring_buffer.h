@@ -1,8 +1,8 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cstddef>
-#include <functional>
 #include <memory>
 #include <cassert>
 #include <cstdlib>
@@ -42,7 +42,7 @@ private:
         std::atomic<size_t> value{0};
 
         // Prevent false sharing with padding
-        char padding[CACHE_LINE_SIZE - sizeof(std::atomic<size_t>)];
+        std::array<char, sizeof(std::atomic_size_t)> padding{};
     };
 
     void backoff(int& spin_count) {
@@ -88,6 +88,8 @@ private:
         }
     }
 
+// TODO: figure out a better tuned default, or have size dynamically calcualted by
+// calling code.
 public:
     explicit SPSCRingBuffer(size_t capacity = static_cast<long>(8) * 1024 * 1024)
         : capacity_(roundUpToPowerOf2(capacity))
@@ -196,7 +198,7 @@ public:
     }
 
     // Overload of tryConsume for pointer types
-    // This version is needed for processor task that work directly with pointer types.
+    // This version is needed for processor tasks that work directly with pointer types.
     // It avoids ambiguity with the general tryConsume(ItemType&), improves readability,
     // and ensures the buffer contents are correctly moved into the caller's pointer.
     //
