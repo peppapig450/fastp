@@ -67,6 +67,7 @@ public:
     bool isLongRead();
     void initOverRepSeq();
     int getMeanLength();
+    static auto test() -> bool;
 
 public:
     static string list2string(double* list, int size);
