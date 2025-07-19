@@ -242,14 +242,14 @@ void Stats::statRead(Read* r) {
             continue;
 
         // calc 5 KMER
-        // 0x3FC == 0011 1111 1100
+        // use Stats::KmerMask to maintain a 10-bit rolling k-mer
         if(!needFullCompute){
             int val = base2val(base);
             if(val < 0){
                 needFullCompute = true;
                 continue;
             } else {
-                kmer = ((kmer<<2) & 0x3FC ) | val;
+                kmer = ((kmer<<2) | val) & Stats::KmerMask;
                 mKmer[kmer]++;
             }
         } else {
@@ -261,7 +261,7 @@ void Stats::statRead(Read* r) {
                     valid = false;
                     break;
                 }
-                kmer = ((kmer<<2) & 0x3FC ) | val;
+                kmer = ((kmer<<2) | val) & Stats::KmerMask;
             }
             if(!valid) {
                 needFullCompute = true;
