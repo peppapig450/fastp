@@ -208,6 +208,11 @@ void Stats::statRead(Read* r) {
     const char q20 = '5';
     const char q30 = '?';
 
+    auto& q20Vec = mCycleQ20Bases.values();
+    auto& q30Vec = mCycleQ30Bases.values();
+    auto& contentVec = mCycleBaseContents.values();
+    auto& qualVec = mCycleBaseQual.values();
+
     for(int i=0; i<len; i++) {
         char base = seqstr[i];
         char qual = qualstr[i];
@@ -218,11 +223,13 @@ void Stats::statRead(Read* r) {
         const int isQ20 = (qual >= q20) ? 1 : 0;
         const int isQ30 = (qual >= q30) ? 1 : 0;
         
-        mCycleQ20Bases(baseIdx, i) += isQ20;
-        mCycleQ30Bases(baseIdx, i) += isQ30;
+        const auto offset = (baseIdx * static_cast<std::size_t>(mBufLen)) + i;
 
-        mCycleBaseContents(baseIdx, i)++;
-        mCycleBaseQual(baseIdx, i) += (qual-33);
+        q20Vec[offset] += isQ20;
+        q30Vec[offset] += isQ30;
+
+        contentVec[offset]++;
+        qualVec[offset] += (qual-33);
 
         mCycleTotalBase[i]++;
         mCycleTotalQual[i] += (qual-33);

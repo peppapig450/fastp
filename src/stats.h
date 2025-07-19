@@ -121,6 +121,9 @@ public:
         }
 
         auto cycleLength() const -> std::size_t { return bufLen; }
+
+        auto values() -> std::vector<long>& { return data; }
+        auto values() const -> const std::vector<long>& { return data; }
     };
 
     // Compound types for per-base cycle data
