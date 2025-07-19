@@ -28,6 +28,10 @@ public:
     static auto qualityCurveIndex(CurveKey key) noexcept -> std::size_t;
     static auto contentCurveIndex(CurveKey key) noexcept -> std::size_t;
 
+    static constexpr std::size_t KmerLen   = 5;
+    static constexpr std::size_t KmerCount = 1U << (2 * KmerLen);
+    static constexpr std::size_t KmerMask  = KmerCount - 1;
+
     // this @guessedCycles parameter should be calculated using the first several records
     Stats(Options* opt, bool isRead2 = false, int guessedCycles = 0, int bufferMargin = 1024);
     ~Stats() = default;
@@ -189,7 +193,6 @@ private:
     bool summarized;
     long mKmerMax;
     long mKmerMin;
-    int mKmerBufLen;
     long mLengthSum;
 };
 
