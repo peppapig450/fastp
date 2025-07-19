@@ -11,7 +11,6 @@
 #include <vector>
 #include "util.h"
 
-#define KMER_LEN 5
 
 static const std::array<Stats::CurveKey, Stats::QualityCurveSize> QualityOrder = {Stats::CurveKey::A,
                                                                                   Stats::CurveKey::T,
@@ -77,9 +76,8 @@ Stats::Stats(Options* opt, bool isRead2, int guessedCycles, int bufferMargin){
     mCycleTotalBase.assign(mBufLen, 0);
     mCycleTotalQual.assign(mBufLen, 0);
 
-    // TODO: this looks to be double the needed size which can skew mean calculations
-    mKmerBufLen = 2<<(KMER_LEN * 2);
-    mKmer.assign(mKmerBufLen, 0);
+    // allocate k-mer counting buffer
+    mKmer.assign(KmerCount, 0);
 
     initOverRepSeq();
 }
