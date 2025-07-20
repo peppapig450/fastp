@@ -1,5 +1,4 @@
-#ifndef STATS_H
-#define STATS_H
+#pragma once
 
 #include <array>
 #include <cstddef>
@@ -59,22 +58,22 @@ public:
     void print();
     void summarize(bool forced = false);
     // a port of JSON report
-    void reportJson(ofstream& ofs, const string& padding);
+    void reportJson(std::ofstream& ofs, const std::string& padding);
     // a port of HTML report
-    void reportHtml(ofstream& ofs, const string& filteringType, const string& readName);
-    void reportHtmlQuality(ofstream& ofs, const string& filteringType, const string& readName);
-    void reportHtmlContents(ofstream& ofs, const string& filteringType, const string& readName);
-    void reportHtmlKMER(ofstream& ofs, const string& filteringType, const string& readName);
-    void reportHtmlORA(ofstream& ofs, const string& filteringType, const string& readName);
+    void reportHtml(std::ofstream& ofs, const std::string& filteringType, const std::string& readName);
+    void reportHtmlQuality(std::ofstream& ofs, const std::string& filteringType, const std::string& readName);
+    void reportHtmlContents(std::ofstream& ofs, const std::string& filteringType, const std::string& readName);
+    void reportHtmlKMER(std::ofstream& ofs, const std::string& filteringType, const std::string& readName);
+    void reportHtmlORA(std::ofstream& ofs, const std::string& filteringType, const std::string& readName);
     bool isLongRead();
     void initOverRepSeq();
     int getMeanLength();
     static auto test() -> bool;
 
 public:
-    static string list2string(double* list, int size);
-    static string list2string(double* list, int size, long* coords);
-    static string list2string(long* list, int size);
+    static std::string list2string(double* list, int size);
+    static std::string list2string(double* list, int size, long* coords);
+    static std::string list2string(long* list, int size);
 
     // Static lookup array for base values
     static constexpr std::array<signed char, 256> BaseValueLookup = {
@@ -153,11 +152,11 @@ public:
 
 private:
     void extendBuffer(int newBufLen);
-    string makeKmerTD(int i, int j);
-    string kmer3(int val);
-    string kmer2(int val);
+    std::string makeKmerTD(int i, int j);
+    std::string kmer3(int val);
+    std::string kmer2(int val);
     void deleteOverRepSeqDist();
-    bool overRepPassed(string& seq, long count);
+    bool overRepPassed(std::string& seq, long count);
 
 private:
     Options* mOptions;
@@ -177,13 +176,12 @@ private:
     KmerArray mKmer;
     KmerLabelArray mKmerLabels{};
 
-    //TODO: Replace with const?
     std::array<long, 128> mBaseQualHistogram{}; // Initializing at construction like this is preferred
 
     std::array<std::vector<double>, QualityCurveSize> mQualityCurves;
     std::array<std::vector<double>, ContentCurveSize> mContentCurves;
-    std::unordered_map<string, long> mOverRepSeq;
-    std::unordered_map<string, std::vector<long>> mOverRepSeqDist;
+    std::unordered_map<std::string, long> mOverRepSeq;
+    std::unordered_map<std::string, std::vector<long>> mOverRepSeqDist;
 
 
     int mCycles;
@@ -202,4 +200,3 @@ private:
     long mKmerTotal;
 };
 
-#endif
