@@ -199,6 +199,7 @@ private:
     long mKmerMax;
     long mKmerMin;
     long mLengthSum;
+    long mKmerTotal;
 };
 
 #endif

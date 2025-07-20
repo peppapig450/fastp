@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -186,6 +187,7 @@ void Stats::summarize(bool forced) {
     auto minmax = std::minmax_element(mKmer.begin(), mKmer.end());
     mKmerMin = *minmax.first;
     mKmerMax = *minmax.second;
+    mKmerTotal = std::accumulate(mKmer.begin(), mKmer.end(), 0L);
 
     summarized = true;
 }
@@ -671,7 +673,7 @@ string Stats::makeKmerTD(int i, int j) {
     long val = mKmer[target];
     // Retrieve k-mer from cache
     const string& kmer = mKmerLabels[target];
-    double meanBases = (double)(mBases+1) / static_cast<double>(Stats::KmerCount);
+    double meanBases = (double)(mKmerTotal+1) / static_cast<double>(Stats::KmerCount);
     double prop = val / meanBases;
     double frac = 0.5;
     if(prop > 2.0) 
@@ -1017,6 +1019,10 @@ auto Stats::test() -> bool {
     }
 
     if (stats.mKmerMax != 2 || stats.mKmerMin != 0) {
+        return false;
+    }
+
+    if (stats.mKmerTotal != 6) {
         return false;
     }
 
