@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
+#include "common.h"
 #include "read.h"
 #include <cstdlib>
 #include <condition_variable>
@@ -38,6 +39,8 @@ private:
     void writerTask(WriterThread* config);
     void recycleToPool(int tid, Read* r);
 
+    static constexpr int InputQueueCapacity = PACK_IN_MEM_LIMIT + 1;
+
 private:
     Options* mOptions;
     atomic_bool mReaderFinished;
@@ -48,8 +51,6 @@ private:
     WriterThread* mFailedWriter;
     Duplicate* mDuplicate;
     SingleProducerSingleConsumerList<ReadPack*>** mInputLists;
-    size_t mPackReadCounter;
-    atomic_long mPackProcessedCounter;
     ReadPool* mReadPool;
 };
 
