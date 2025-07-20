@@ -31,7 +31,8 @@ public:
     static constexpr std::size_t KmerLen   = 5;
     static constexpr std::size_t KmerCount = 1U << (2 * KmerLen);
     static constexpr std::size_t KmerMask  = KmerCount - 1;
-    using KmerArray = std::array<long, KmerCount>;
+    using KmerArray                        = std::array<long, KmerCount>;
+    using KmerLabelArray                   = std::array<std::string, KmerCount>;
 
     // this @guessedCycles parameter should be calculated using the first several records
     Stats(Options* opt, bool isRead2 = false, int guessedCycles = 0, int bufferMargin = 1024);
@@ -174,6 +175,7 @@ private:
     CountVector mCycleTotalQual;
 
     KmerArray mKmer;
+    KmerLabelArray mKmerLabels{};
 
     //TODO: Replace with const?
     std::array<long, 128> mBaseQualHistogram{}; // Initializing at construction like this is preferred

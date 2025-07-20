@@ -76,8 +76,15 @@ Stats::Stats(Options* opt, bool isRead2, int guessedCycles, int bufferMargin){
     mCycleTotalBase.assign(mBufLen, 0);
     mCycleTotalQual.assign(mBufLen, 0);
 
-    // allocate k-mer counting buffer
+    // allocate k-mer counting buffer and build label cache
     mKmer.fill(0);
+    for (std::size_t i = 0; i < (Stats::KmerCount >> 4); ++i) {
+        auto prefix = kmer3(static_cast<int>(i));
+        for (std::size_t j = 0; j < 16; ++j) {
+            auto idx = (i << 4) | j;
+            mKmerLabels[idx] = prefix + kmer2(static_cast<int>(j));
+        }
+    }
 
     initOverRepSeq();
 }
@@ -643,13 +650,13 @@ void Stats::reportHtmlKMER(ofstream& ofs, const string& filteringType, const str
     ofs << "<td></td>";
     // the heading row
     for(int h=0; h<16; h++) 
-        ofs << "<td style='color:#333333'>" << kmer2(h) << "</td>";
+        ofs << "<td style='color:#333333'>" << mKmerLabels[h].substr(3) << "</td>";
     ofs << "</tr>\n";
     // content
     for(int i=0; i<64; i++) {
         ofs << "<tr>";
 
-        ofs << "<td style='color:#333333'>" << kmer3(i) << "</td>";
+        ofs << "<td style='color:#333333'>" << mKmerLabels[i<<4].substr(0, 3) << "</td>";
         for(int j=0; j<16; j++) {
             ofs << makeKmerTD(i,j) ;
         }
@@ -662,10 +669,8 @@ void Stats::reportHtmlKMER(ofstream& ofs, const string& filteringType, const str
 string Stats::makeKmerTD(int i, int j) {
     int target = (i<<4) + j;
     long val = mKmer[target];
-    // 3bp + 2bp = 5bp
-    string first = kmer3(i);
-    string last = kmer2(j);
-    string kmer = first+last;
+    // Retrieve k-mer from cache
+    const string& kmer = mKmerLabels[target];
     double meanBases = (double)(mBases+1) / static_cast<double>(Stats::KmerCount);
     double prop = val / meanBases;
     double frac = 0.5;
