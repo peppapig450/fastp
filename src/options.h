@@ -4,8 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
+#include <unordered_map>
 #include <vector>
-#include <map>
 
 using namespace std;
 
@@ -359,8 +359,8 @@ public:
     PolyXTrimmerOptions polyXTrim;
     // for overrepresentation analysis
     OverrepresentedSequenceAnasysOptions overRepAnalysis;
-    map<string, long> overRepSeqs1;
-    map<string, long> overRepSeqs2;
+    std::unordered_map<string, long> overRepSeqs1;
+    std::unordered_map<string, long> overRepSeqs2;
     int seqLen1;
     int seqLen2;
     // low complexity filtering

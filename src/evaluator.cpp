@@ -1,9 +1,11 @@
 #include "evaluator.h"
 #include "fastqreader.h"
 #include <map>
+#include <unordered_map>
 #include <memory.h>
 #include "nucleotidetree.h"
 #include "knownadapters.h"
+#include "util.h"
 
 Evaluator::Evaluator(Options* opt){
     mOptions = opt;
@@ -62,10 +64,10 @@ int Evaluator::computeSeqLen(string filename) {
     return seqlen;
 }
 
-void Evaluator::computeOverRepSeq(string filename, map<string, long>& hotseqs, int seqlen) {
+void Evaluator::computeOverRepSeq(string filename, std::unordered_map<string, long>& hotseqs, int seqlen) {
     FastqReader reader(filename);
 
-    map<string, long> seqCounts;
+    std::unordered_map<string, long> seqCounts;
 
     const long BASE_LIMIT = 151 * 10000;
     long records = 0;
@@ -99,7 +101,7 @@ void Evaluator::computeOverRepSeq(string filename, map<string, long>& hotseqs, i
         delete r;
     }
     
-    map<string, long>::iterator iter;
+    std::unordered_map<string, long>::iterator iter;
     for(iter = seqCounts.begin(); iter!=seqCounts.end(); iter++) {
         string seq = iter->first;
         long count = iter->second;
@@ -128,7 +130,7 @@ void Evaluator::computeOverRepSeq(string filename, map<string, long>& hotseqs, i
     }
 
     // remove substrings
-    map<string, long>::iterator iter2;
+    std::unordered_map<string, long>::iterator iter2;
     iter = hotseqs.begin(); 
     while(iter!=hotseqs.end()) {
         string seq = iter->first;

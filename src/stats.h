@@ -1,21 +1,48 @@
-#ifndef STATS_H
-#define STATS_H
+#pragma once
 
-#include <stdio.h>
-#include <stdlib.h>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <string>
+#include <unordered_map>
 #include <vector>
-#include <map>
 #include "read.h"
 #include "options.h"
 
-using namespace std;
 
 class Stats{
 public:
+    enum class CurveKey: std::uint8_t { A, T, C, G, N, Mean, GC };
+
+    enum class BaseIndex : std::uint8_t { A = 0, T, C, G, N, Count };
+    static constexpr std::size_t BaseCount = static_cast<std::size_t>(BaseIndex::Count);
+
+    static constexpr std::size_t InvalidIndex = std::numeric_limits<std::size_t>::max();
+
+    static constexpr std::size_t QualityCurveSize = 5;
+    static constexpr std::size_t ContentCurveSize = 6;
+    static constexpr std::size_t CurveIndexSize   = 7;
+
+    static auto qualityCurveIndex(CurveKey key) noexcept -> std::size_t;
+    static auto contentCurveIndex(CurveKey key) noexcept -> std::size_t;
+
+    static constexpr std::size_t KmerLen   = 5;
+    static constexpr std::size_t KmerCount = 1U << (2 * KmerLen);
+    static constexpr std::size_t KmerMask  = KmerCount - 1;
+    using KmerArray                        = std::array<long, KmerCount>;
+    using KmerLabelArray                   = std::array<std::string, KmerCount>;
+
     // this @guessedCycles parameter should be calculated using the first several records
     Stats(Options* opt, bool isRead2 = false, int guessedCycles = 0, int bufferMargin = 1024);
-    ~Stats();
+    ~Stats() = default;
+
+    // Copy and move constructors/assignment operators
+    Stats(const Stats& other) = default;
+    Stats(Stats&& other) noexcept = default;
+    auto operator=(const Stats& other) -> Stats& = default;
+    auto operator=(Stats&& other) noexcept -> Stats& = default;
+
     int getCycles();
     long getReads();
     long getBases();
@@ -23,7 +50,7 @@ public:
     long getQ30();
     long getQ40();
     long getGCNumber();
-    long* getQualHist();
+    auto getQualHist() const -> const std::array<long, 128>&;
     // by default the qualified qual score is Q20 ('5')
     void statRead(Read* r);
 
@@ -31,74 +58,145 @@ public:
     void print();
     void summarize(bool forced = false);
     // a port of JSON report
-    void reportJson(ofstream& ofs, string padding);
+    void reportJson(std::ofstream& ofs, const std::string& padding);
     // a port of HTML report
-    void reportHtml(ofstream& ofs, string filteringType, string readName);
-    void reportHtmlQuality(ofstream& ofs, string filteringType, string readName);
-    void reportHtmlContents(ofstream& ofs, string filteringType, string readName);
-    void reportHtmlKMER(ofstream& ofs, string filteringType, string readName);
-    void reportHtmlORA(ofstream& ofs, string filteringType, string readName);
+    void reportHtml(std::ofstream& ofs, const std::string& filteringType, const std::string& readName);
+    void reportHtmlQuality(std::ofstream& ofs, const std::string& filteringType, const std::string& readName);
+    void reportHtmlContents(std::ofstream& ofs, const std::string& filteringType, const std::string& readName);
+    void reportHtmlKMER(std::ofstream& ofs, const std::string& filteringType, const std::string& readName);
+    void reportHtmlORA(std::ofstream& ofs, const std::string& filteringType, const std::string& readName);
     bool isLongRead();
     void initOverRepSeq();
     int getMeanLength();
+    static auto test() -> bool;
 
 public:
-    static string list2string(double* list, int size);
-    static string list2string(double* list, int size, long* coords);
-    static string list2string(long* list, int size);
-    static int base2val(char base);
+    static std::string list2string(double* list, int size);
+    static std::string list2string(double* list, int size, long* coords);
+    static std::string list2string(long* list, int size);
+
+    // Static lookup array for base values
+    static constexpr std::array<signed char, 256> BaseValueLookup = {
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0,  -1, 2,  -1, -1, -1, 3,  -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, 1,  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    };
+    static auto base2val(char base) noexcept -> std::int8_t;
+
+    // Base types for all count/statistics vectors
+    using CountVector = std::vector<long>;
+
+    // helper container for per-base per-cycle statistics
+    struct BaseCycleArray {
+      private:
+        std::vector<long> data;
+        std::size_t bases{0};
+        std::size_t bufLen{0};
+
+        auto index(std::size_t cycle, std::size_t base) const noexcept -> std::size_t {
+            return (cycle * bases) + base;
+        }
+
+      public:
+        BaseCycleArray() = default;
+        BaseCycleArray(std::size_t base, std::size_t len) : data(len * base, 0), bases(base), bufLen(len) {}
+
+        auto operator()(std::size_t cycle, std::size_t base) -> long& { return data[index(cycle, base)]; }
+
+        auto operator()(std::size_t cycle, std::size_t base) const -> const long& {
+            return data[index(cycle, base)];
+        }
+
+        void resize(std::size_t base, std::size_t newLen) {
+            std::vector<long> newData(newLen * base, 0);
+            std::size_t minBase = std::min(base, bases);
+            std::size_t minLen  = std::min(newLen, bufLen);
+
+            for (std::size_t cycleIdx = 0; cycleIdx < minLen; ++cycleIdx) {
+                for (std::size_t baseIdx = 0; baseIdx < minBase; ++baseIdx) {
+                    newData[(cycleIdx * base) + baseIdx] = (*this)(cycleIdx, baseIdx);
+                }
+            }
+
+            data.swap(newData);
+            bases = base;
+            bufLen = newLen;
+        }
+
+        auto cycleLength() const -> std::size_t { return bufLen; }
+        auto baseCount() const -> std::size_t { return bases; }
+
+        auto values() -> std::vector<long>& { return data; }
+        auto values() const -> const std::vector<long>& { return data; }
+    };
+
+    // Compound types for per-base cycle data
+    static constexpr std::array<unsigned char, 256> BaseIndexLookup = {
+        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 0, 5, 2, 5, 5, 5, 3, 5, 5,
+        5, 5, 5, 5, 4, 5, 5, 5, 5, 5, 1, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+    };
+    static auto baseIndex(char base) noexcept -> std::size_t;
+    using BaseArray = std::array<long, BaseCount>;
 
 private:
     void extendBuffer(int newBufLen);
-    string makeKmerTD(int i, int j);
-    string kmer3(int val);
-    string kmer2(int val);
+    std::string makeKmerTD(int i, int j);
+    std::string kmer3(int val);
+    std::string kmer2(int val);
     void deleteOverRepSeqDist();
-    bool overRepPassed(string& seq, long count);
+    bool overRepPassed(std::string& seq, long count);
 
 private:
     Options* mOptions;
     bool mIsRead2;
     long mReads;
     int mEvaluatedSeqLen;
-    /* 
-    why we use 8 here?
-    map A/T/C/G/N to 0~7 by their ASCII % 8:
-    'A' % 8 = 1
-    'T' % 8 = 4
-    'C' % 8 = 3
-    'G' % 8 = 7
-    'N' % 8 = 6
-    */
-    long *mCycleQ30Bases[8];
-    long *mCycleQ20Bases[8];
-    long *mCycleBaseContents[8];
-    long *mCycleBaseQual[8];
-    long *mCycleTotalBase;
-    long *mCycleTotalQual;
-    long *mKmer;
-    long mBaseQualHistogram[128];
 
-    map<string, double*> mQualityCurves;
-    map<string, double*> mContentCurves;
-    map<string, long> mOverRepSeq;
-    map<string, long*> mOverRepSeqDist;
+    // Per-base statistics
+    BaseCycleArray mCycleQ30Bases;
+    BaseCycleArray mCycleQ20Bases;
+    BaseCycleArray mCycleBaseContents;
+    BaseCycleArray mCycleBaseQual;
+
+    CountVector mCycleTotalBase;
+    CountVector mCycleTotalQual;
+
+    KmerArray mKmer;
+    KmerLabelArray mKmerLabels{};
+
+    std::array<long, 128> mBaseQualHistogram{}; // Initializing at construction like this is preferred
+
+    std::array<std::vector<double>, QualityCurveSize> mQualityCurves;
+    std::array<std::vector<double>, ContentCurveSize> mContentCurves;
+    std::unordered_map<std::string, long> mOverRepSeq;
+    std::unordered_map<std::string, std::vector<long>> mOverRepSeqDist;
 
 
     int mCycles;
     int mBufLen;
     long mBases;
-    long mQ20Bases[8];
-    long mQ30Bases[8];
-    long mBaseContents[8];
+    BaseArray mQ20Bases;
+    BaseArray mQ30Bases;
+    BaseArray mBaseContents;
     long mQ20Total;
     long mQ30Total;
     long mQ40Total;
     bool summarized;
     long mKmerMax;
     long mKmerMin;
-    int mKmerBufLen;
     long mLengthSum;
+    long mKmerTotal;
 };
 
-#endif
