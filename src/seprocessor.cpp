@@ -28,9 +28,6 @@ SingleEndProcessor::SingleEndProcessor(Options* opt){
         mDuplicate = new Duplicate(mOptions);
     }
 
-    mPackReadCounter = 0;
-    mPackProcessedCounter = 0;
-
     mReadPool = new ReadPool(mOptions);
 }
 
@@ -87,7 +84,7 @@ bool SingleEndProcessor::process(){
 
     ThreadConfig** configs = new ThreadConfig*[mOptions->thread];
     for(int t=0; t<mOptions->thread; t++){
-        mInputLists[t] = new SingleProducerSingleConsumerList<ReadPack*>();
+        mInputLists[t] = new SingleProducerSingleConsumerList<ReadPack*>(InputQueueCapacity);
         configs[t] = new ThreadConfig(mOptions, t, false);
         configs[t]->setInputList(mInputLists[t]);
         initConfig(configs[t]);
@@ -321,8 +318,6 @@ bool SingleEndProcessor::processSingleEnd(ReadPack* pack, ThreadConfig* config){
     delete[] pack->data;
     delete pack;
 
-    mPackProcessedCounter++;
-
     return true;
 }
 
@@ -331,8 +326,8 @@ void SingleEndProcessor::readerTask()
     if(mOptions->verbose)
         loginfo("start to load data");
     long lastReported = 0;
-    int slept = 0;
     long readNum = 0;
+    std::size_t packCounter = 0;
     bool splitSizeReEvaluated = false;
     Read** data = new Read*[PACK_SIZE];
     memset(data, 0, sizeof(Read*)*PACK_SIZE);
@@ -347,8 +342,8 @@ void SingleEndProcessor::readerTask()
             ReadPack* pack = new ReadPack;
             pack->data = data;
             pack->count = count;
-            mInputLists[mPackReadCounter % mOptions->thread]->produce(pack);
-            mPackReadCounter++;
+            mInputLists[packCounter % mOptions->thread]->produce(pack);
+            packCounter++;
             data = NULL;
             if(read) {
                 delete read;
@@ -372,26 +367,11 @@ void SingleEndProcessor::readerTask()
             ReadPack* pack = new ReadPack;
             pack->data = data;
             pack->count = count;
-            mInputLists[mPackReadCounter % mOptions->thread]->produce(pack);
-            mPackReadCounter++;
+            mInputLists[packCounter % mOptions->thread]->produce(pack);
+            packCounter++;
             //re-initialize data for next pack
             data = new Read*[PACK_SIZE];
             memset(data, 0, sizeof(Read*)*PACK_SIZE);
-            // if the processor is far behind this reader, sleep and wait to limit memory usage
-            while( mPackReadCounter - mPackProcessedCounter > PACK_IN_MEM_LIMIT){
-                //cerr<<"sleep"<<endl;
-                slept++;
-                usleep(100);
-            }
-            readNum += count;
-            // if the writer threads are far behind this reader, sleep and wait
-            // check this only when necessary
-            if(readNum % (PACK_SIZE * PACK_IN_MEM_LIMIT) == 0 && mLeftWriter) {
-                while(mLeftWriter->bufferLength() > PACK_IN_MEM_LIMIT) {
-                    slept++;
-                    usleep(1000);
-                }
-            }
             // reset count to 0
             count = 0;
             // re-evaluate split size
@@ -417,7 +397,7 @@ void SingleEndProcessor::readerTask()
     //std::unique_lock<std::mutex> lock(mRepo.readCounterMtx);
     mReaderFinished = true;
     if(mOptions->verbose) {
-        loginfo("Loading completed with " + to_string(mPackReadCounter) + " packs");
+        loginfo("Loading completed with " + to_string(packCounter) + " packs");
     }
     //lock.unlock();
 
