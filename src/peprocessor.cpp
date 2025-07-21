@@ -40,10 +40,6 @@ PairEndProcessor::PairEndProcessor(Options* opt){
         mDuplicate = new Duplicate(mOptions);
     }
 
-    mLeftPackReadCounter = 0;
-    mRightPackReadCounter = 0;
-    mPackProcessedCounter = 0;
-
     mLeftReadPool = new ReadPool(mOptions);
     mRightReadPool = new ReadPool(mOptions);
 }
@@ -153,8 +149,8 @@ bool PairEndProcessor::process(){
 
     ThreadConfig** configs = new ThreadConfig*[mOptions->thread];
     for(int t=0; t<mOptions->thread; t++){
-        mLeftInputLists[t] = new SingleProducerSingleConsumerList<ReadPack*>();
-        mRightInputLists[t] = new SingleProducerSingleConsumerList<ReadPack*>();
+        mLeftInputLists[t] = new SingleProducerSingleConsumerList<ReadPack*>(InputQueueCapacity);
+        mRightInputLists[t] = new SingleProducerSingleConsumerList<ReadPack*>(InputQueueCapacity);
         configs[t] = new ThreadConfig(mOptions, t, true);
         configs[t]->setInputListPair(mLeftInputLists[t], mRightInputLists[t]);
         initConfig(configs[t]);
@@ -711,8 +707,6 @@ bool PairEndProcessor::processPairEnd(ReadPack* leftPack, ReadPack* rightPack, T
     delete leftPack;
     delete rightPack;
 
-    mPackProcessedCounter++;
-
     return true;
 }
     
@@ -740,8 +734,8 @@ void PairEndProcessor::readerTask(bool isLeft)
             loginfo("start to load data of read2");
     }
     long lastReported = 0;
-    int slept = 0;
     long readNum = 0;
+    std::size_t packCounter = 0;
     bool splitSizeReEvaluated = false;
     Read** data = new Read*[PACK_SIZE];
     memset(data, 0, sizeof(Read*)*PACK_SIZE);
@@ -768,12 +762,11 @@ void PairEndProcessor::readerTask(bool isLeft)
             pack->count = count;
 
             if(isLeft) {
-                mLeftInputLists[mLeftPackReadCounter % mOptions->thread]->produce(pack);
-                mLeftPackReadCounter++;
+                mLeftInputLists[packCounter % mOptions->thread]->produce(pack);
             } else {
-                mRightInputLists[mRightPackReadCounter % mOptions->thread]->produce(pack);
-                mRightPackReadCounter++;
+                mRightInputLists[packCounter % mOptions->thread]->produce(pack);
             }
+            packCounter++;
             data = NULL;
             if(read) {
                 delete read;
@@ -803,40 +796,19 @@ void PairEndProcessor::readerTask(bool isLeft)
             pack->data = data;
             pack->count = count;
             
+            // rely on the blocking behavior of produce() to limit memory usage and avoid race conditions
             if(isLeft) {
-                mLeftInputLists[mLeftPackReadCounter % mOptions->thread]->produce(pack);
-                mLeftPackReadCounter++;
+                mLeftInputLists[packCounter % mOptions->thread]->produce(pack);
             } else {
-                mRightInputLists[mRightPackReadCounter % mOptions->thread]->produce(pack);
-                mRightPackReadCounter++;
+                mRightInputLists[packCounter % mOptions->thread]->produce(pack);
             }
+            packCounter++;
 
             //re-initialize data for next pack
             data = new Read*[PACK_SIZE];
             memset(data, 0, sizeof(Read*)*PACK_SIZE);
-            // if the processor is far behind this reader, sleep and wait to limit memory usage
-            if(isLeft) {
-                while(mLeftPackReadCounter - mPackProcessedCounter > PACK_IN_MEM_LIMIT){
-                    //cerr<<"sleep"<<endl;
-                    slept++;
-                    usleep(100);
-                }
-            } else {
-                while(mRightPackReadCounter - mPackProcessedCounter > PACK_IN_MEM_LIMIT){
-                    //cerr<<"sleep"<<endl;
-                    slept++;
-                    usleep(100);
-                }
-            }
+            // Rely on WriterThread::input blocking to handle backpressure
             readNum += count;
-            // if the writer threads are far behind this producer, sleep and wait
-            // check this only when necessary
-            if(readNum % (PACK_SIZE * PACK_IN_MEM_LIMIT) == 0 && mLeftWriter) {
-                while( (mLeftWriter && mLeftWriter->bufferLength() > PACK_IN_MEM_LIMIT) || (mRightWriter && mRightWriter->bufferLength() > PACK_IN_MEM_LIMIT) ){
-                    slept++;
-                    usleep(1000);
-                }
-            }
             // reset count to 0
             count = 0;
             // re-evaluate split size
@@ -866,11 +838,11 @@ void PairEndProcessor::readerTask(bool isLeft)
     if(mOptions->verbose) {
         if(isLeft) {
             mLeftReaderFinished = true;
-            loginfo("Read1: loading completed with " + to_string(mLeftPackReadCounter) + " packs");
+            loginfo("Read1: loading completed with " + std::to_string(packCounter) + " packs");
         }
         else {
             mRightReaderFinished = true;
-            loginfo("Read2: loading completed with " + to_string(mRightPackReadCounter) + " packs");
+            loginfo("Read2: loading completed with " + to_string(packCounter) + " packs");
         }
     }
     
@@ -887,8 +859,8 @@ void PairEndProcessor::interleavedReaderTask()
     if(mOptions->verbose)
         loginfo("start to load data");
     long lastReported = 0;
-    int slept = 0;
     long readNum = 0;
+    std::size_t packCounter = 0;
     bool splitSizeReEvaluated = false;
     Read** dataLeft = new Read*[PACK_SIZE];
     Read** dataRight = new Read*[PACK_SIZE];
@@ -909,11 +881,9 @@ void PairEndProcessor::interleavedReaderTask()
             packLeft->count = count;
             packRight->count = count;
 
-            mLeftInputLists[mLeftPackReadCounter % mOptions->thread]->produce(packLeft);
-            mLeftPackReadCounter++;
-
-            mRightInputLists[mRightPackReadCounter % mOptions->thread]->produce(packRight);
-            mRightPackReadCounter++;
+            mLeftInputLists[packCounter % mOptions->thread]->produce(packLeft);
+            mRightInputLists[packCounter % mOptions->thread]->produce(packRight);
+            packCounter++;
 
             dataLeft = NULL;
             dataRight = NULL;
@@ -944,32 +914,17 @@ void PairEndProcessor::interleavedReaderTask()
             packLeft->count = count;
             packRight->count = count;
 
-            mLeftInputLists[mLeftPackReadCounter % mOptions->thread]->produce(packLeft);
-            mLeftPackReadCounter++;
-
-            mRightInputLists[mRightPackReadCounter % mOptions->thread]->produce(packRight);
-            mRightPackReadCounter++;
+            mLeftInputLists[packCounter % mOptions->thread]->produce(packLeft);
+            mRightInputLists[packCounter % mOptions->thread]->produce(packRight);
+            packCounter++;
 
             //re-initialize data for next pack
             dataLeft = new Read*[PACK_SIZE];
             dataRight = new Read*[PACK_SIZE];
             memset(dataLeft, 0, sizeof(Read*)*PACK_SIZE);
             memset(dataRight, 0, sizeof(Read*)*PACK_SIZE);
-            // if the consumer is far behind this producer, sleep and wait to limit memory usage
-            while(mLeftPackReadCounter - mPackProcessedCounter > PACK_IN_MEM_LIMIT){
-                //cerr<<"sleep"<<endl;
-                slept++;
-                usleep(100);
-            }
+
             readNum += count;
-            // if the writer threads are far behind this producer, sleep and wait
-            // check this only when necessary
-            if(readNum % (PACK_SIZE * PACK_IN_MEM_LIMIT) == 0 && mLeftWriter) {
-                while( (mLeftWriter && mLeftWriter->bufferLength() > PACK_IN_MEM_LIMIT) || (mRightWriter && mRightWriter->bufferLength() > PACK_IN_MEM_LIMIT) ){
-                    slept++;
-                    usleep(1000);
-                }
-            }
             // reset count to 0
             count = 0;
             // re-evaluate split size
@@ -995,7 +950,7 @@ void PairEndProcessor::interleavedReaderTask()
     }
 
     if(mOptions->verbose) {
-        loginfo("interleaved: loading completed with " + to_string(mLeftPackReadCounter) + " packs");
+        loginfo("interleaved: loading completed with " + std::to_string(packCounter) + " packs");
     }
 
     mLeftReaderFinished = true;

@@ -1,82 +1,109 @@
 #include "writerthread.h"
-#include "util.h"
+
 #include <memory.h>
-#include <unistd.h>
 
-WriterThread::WriterThread(Options* opt, string filename, bool isSTDOUT){
-    mOptions = opt;
+#include <atomic>
 
-    mWriter1 = NULL;
+#include "spsc_ring_buffer.h"
+#include "writer.h"
 
-    mInputCompleted = false;
-    mFilename = filename;
-
+// 0 ~ mOptions->thread-1
+WriterThread::WriterThread(Options* opt, const std::string& filename, bool isSTDOUT)
+    : mOptions(opt), mFilename(filename), mBufferLists(nullptr), mWorkingBufferList(0) {
     initWriter(filename, isSTDOUT);
     initBufferLists();
-    mWorkingBufferList = 0; // 0 ~ mOptions->thread-1
-    mBufferLength = 0;
 }
 
-WriterThread::~WriterThread() {
-    cleanup();
-}
+WriterThread::~WriterThread() { cleanup(); }
 
-bool WriterThread::isCompleted() 
-{
-    return mInputCompleted && (mBufferLength==0);
-}
+auto WriterThread::isCompleted() const -> bool {
+    if (!mInputCompleted.load(std::memory_order_acquire)) {
+        return false;
+    }
 
-bool WriterThread::setInputCompleted() {
-    mInputCompleted = true;
-    for(int t=0; t<mOptions->thread; t++) {
-        mBufferLists[t]->setProducerFinished();
+    if (mBufferLists == nullptr) {
+        return true;
+    }
+
+    for (int threadIdx = 0; threadIdx < mOptions->thread; ++threadIdx) {
+        auto* bufferList = mBufferLists[threadIdx];
+        if (bufferList != nullptr && (!bufferList->empty() || !bufferList->isProducerFinished())) {
+            return false;
+        }
     }
     return true;
 }
 
-void WriterThread::output(){
-    SingleProducerSingleConsumerList<string*>* list =  mBufferLists[mWorkingBufferList];
-    if(!list->canBeConsumed()) {
-        usleep(100);
-    } else {
-        string* str = list->consume();
-        mWriter1->write(str->data(), str->length());
-        delete str;
-        mBufferLength--;
-        mWorkingBufferList = (mWorkingBufferList+1)%mOptions->thread;
+auto WriterThread::setInputCompleted() -> bool {
+    mInputCompleted.store(true, std::memory_order_release);
+
+    if (mBufferLists != nullptr) {
+        for (int threadIdx = 0; threadIdx < mOptions->thread; ++threadIdx) {
+            auto* bufferList = mBufferLists[threadIdx];
+            if (bufferList != nullptr) {
+                bufferList->setProducerFinished();
+            }
+        }
     }
+    return true;
 }
 
+void WriterThread::output() {
+    if (mBufferLists == nullptr || mWriter1 == nullptr) {
+        return;
+    }
 
-void WriterThread::input(int tid, string* data) {
-    mBufferLists[tid]->produce(data);
-    mBufferLength++;
+    auto* list = mBufferLists[mWorkingBufferList];
+    if (list == nullptr) {
+        // This should never happen with proper initialization but we handle it defensively
+        // rather than crashing.
+        advanceWorkingBuffer();
+        return;
+    }
+
+    // NOTE: if we populate the buffer with std::unique_ptr's we wouldn't have do this.
+    std::string* str = nullptr;
+    if (list->tryConsume(str)) {
+        mWriter1->write(str->data(), str->length());
+        delete str;
+    }
+    advanceWorkingBuffer();
+}
+
+void WriterThread::input(int tid, std::string* data) {
+    if (mBufferLists != nullptr && tid >= 0 && tid < mOptions->thread && mBufferLists[tid] != nullptr) {
+        mBufferLists[tid]->produce(data);
+    }
 }
 
 void WriterThread::cleanup() {
-    deleteWriter();
-    for(int t=0; t<mOptions->thread; t++) {
-        delete mBufferLists[t];
-    }
-    delete[] mBufferLists;
-    mBufferLists = NULL;
-}
+    mWriter1.reset();
 
-void WriterThread::deleteWriter() {
-    if(mWriter1 != NULL) {
-        delete mWriter1;
-        mWriter1 = NULL;
+    if (mBufferLists != nullptr) {
+        for (int threadIdx = 0; threadIdx < mOptions->thread; ++threadIdx) {
+            delete mBufferLists[threadIdx];
+        }
+        delete[] mBufferLists;
+        mBufferLists = nullptr;
     }
 }
 
-void WriterThread::initWriter(string filename1, bool isSTDOUT) {
-    deleteWriter();
-    mWriter1 = new Writer(mOptions, filename1, mOptions->compression, isSTDOUT);
+void WriterThread::deleteWriter() { mWriter1.reset(); }
+
+void WriterThread::initWriter(const std::string& filename1, bool isSTDOUT) {
+    mWriter1.reset(new Writer(mOptions, filename1, mOptions->compression, isSTDOUT));
 }
 
 void WriterThread::initBufferLists() {
-    mBufferLists = new SingleProducerSingleConsumerList<string*>*[mOptions->thread];
-    for(int t=0; t<mOptions->thread; t++) {
-        mBufferLists[t] = new SingleProducerSingleConsumerList<string*>();
+    if (mBufferLists != nullptr) {
+        cleanup();
+    }
+
+    auto threadNum = mOptions->thread;
+    mBufferLists   = new SingleProducerSingleConsumerList<std::string*>*[threadNum];
+    for (int threadIdx = 0; threadIdx < threadNum; ++threadIdx) {
+        mBufferLists[threadIdx] = new SingleProducerSingleConsumerList<std::string*>(BufferListCapacity);
     }
 }
+
+void WriterThread::advanceWorkingBuffer() { mWorkingBufferList = (mWorkingBufferList + 1) % mOptions->thread; }
