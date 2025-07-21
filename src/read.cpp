@@ -53,10 +53,11 @@ void Read::printFile(ofstream& file){
 }
 
 Read* Read::reverseComplement(){
-	string seq = Sequence::reverseComplement(mSeq);
-	string qual;
+	Sequence rcSeq(*mSeq);
+	Sequence rc = rcSeq.reverseComplement();
+	std::string qual;
 	qual.assign(mQuality->rbegin(), mQuality->rend());
-	return new Read(mName->c_str(), seq.c_str(), "+", qual.c_str());
+	return new Read(mName->c_str(), rc.str().c_str(), "+", qual.c_str());
 }
 
 void Read::resize(int len) {

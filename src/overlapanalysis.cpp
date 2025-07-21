@@ -2,6 +2,7 @@
 #include "overlapanalysis.h"
 #include <memory>
 #include <string>
+#include "sequence.h"
 
 OverlapAnalysis::OverlapAnalysis(){
 }
@@ -16,12 +17,12 @@ OverlapResult OverlapAnalysis::analyze(Read* r1, Read* r2, int overlapDiffLimit,
 
 // ported from the python code of AfterQC
 OverlapResult OverlapAnalysis::analyze(string*  r1, string*  r2, int diffLimit, int overlapRequire, double diffPercentLimit, bool allowGap) {
-    string rcr2 = Sequence::reverseComplement(r2);
+    Sequence rc2 = Sequence(*r2).reverseComplement();
     int len1 = r1->length();
-    int len2 = rcr2.length();
+    int len2 = rc2.length();
     // use the pointer directly for speed
     const char* str1 = r1->c_str();
-    const char* str2 = rcr2.c_str();
+    const char* str2 = rc2.str().c_str();
 
     int complete_compare_require = 50;
 
