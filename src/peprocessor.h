@@ -43,6 +43,8 @@ private:
     void recycleToPool1(int tid, Read* r);
     void recycleToPool2(int tid, Read* r);
 
+    static constexpr int InputQueueCapacity = PACK_IN_MEM_LIMIT + 1;
+
 private:
     atomic_bool mLeftReaderFinished;
     atomic_bool mRightReaderFinished;

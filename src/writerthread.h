@@ -1,49 +1,51 @@
-#ifndef WRITER_THREAD_H
-#define WRITER_THREAD_H
+#pragma once
 
-#include <stdio.h>
-#include <stdlib.h>
+#include <memory>
 #include <string>
-#include <vector>
 #include "writer.h"
 #include "options.h"
 #include <atomic>
-#include <mutex>
 #include "spsc_ring_buffer.h"
 
-using namespace std;
 
 class WriterThread{
 public:
-    WriterThread(Options* opt, string filename, bool isSTDOUT = false);
+    WriterThread(Options* opt, const std::string& filename, bool isSTDOUT = false);
     ~WriterThread();
 
-    void initWriter(string filename1, bool isSTDOUT = false);
+    // disabling copy as we do not two threads managing the same buffer
+    WriterThread(const WriterThread&)                    = delete;
+    auto operator=(const WriterThread&) -> WriterThread& = delete;
+
+    // disable move as it can lead to half-moved atomics
+    WriterThread(WriterThread&&)                    = delete;
+    auto operator=(WriterThread&&) -> WriterThread& = delete;
+
+    void initWriter(const std::string& filename1, bool isSTDOUT = false);
     void initBufferLists();
 
     void cleanup();
 
-    bool isCompleted();
+    auto isCompleted() const -> bool;
     void output();
-    void input(int tid, string* data);
+    void input(int tid, std::string* data);
     bool setInputCompleted();
 
-    long bufferLength() {return mBufferLength;};
-    string getFilename() {return mFilename;}
+    auto getFilename() -> const std::string& { return mFilename; }
 
 private:
     void deleteWriter();
+    void advanceWorkingBuffer();
 
 private:
-    Writer* mWriter1;
+    std::unique_ptr<Writer> mWriter1;
     Options* mOptions;
-    string mFilename;
+    std::string mFilename;
 
     // for spliting output
-    bool mInputCompleted;
-    atomic_long mBufferLength;
-    SingleProducerSingleConsumerList<string*>** mBufferLists;
+    std::atomic_bool mInputCompleted{false};
+    SingleProducerSingleConsumerList<std::string*>** mBufferLists;
     int mWorkingBufferList;
-};
 
-#endif
+    static constexpr int BufferListCapacity = PACK_IN_MEM_LIMIT + 1;
+};
