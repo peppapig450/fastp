@@ -63,6 +63,8 @@ private:
                 #if defined (__x86_64__) || defined (__i386__)
                     // x86 PAUSE instruction: hints to CPU this is a spin-wait loop
                     // Reduces resource usage and improves hyper-threading performance
+                    // TODO: this is clang/gcc only maybe look into using _mm_pause()
+                    // TODO: this can also be extracted into a function for clarity.
                     __builtin_ia32_pause();
                 #elif defined (__aarch64__)
                     // ARM64 YIELD instruction: similar to X86 PAUSE
