@@ -22,6 +22,10 @@ public:
 
     double getDupRate();
 
+#ifdef DEBUG_DUPLICATE
+    friend void runAllDebugTests(Duplicate* dup);  // Only line added to header
+#endif
+
 private:
     void initPrimeArrays();
     bool applyBloomFilter(uint64* positions);
