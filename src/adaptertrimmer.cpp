@@ -16,14 +16,16 @@ bool AdapterTrimmer::trimByOverlapAnalysis(Read* r1, Read* r2, FilterResult* fr,
 bool AdapterTrimmer::trimByOverlapAnalysis(Read* r1, Read* r2, FilterResult* fr, OverlapResult ov, int frontTrimmed1, int frontTrimmed2) {
     int ol = ov.overlap_len;
     if(ov.overlapped && ov.offset < 0) {
+        const auto& r1Len = static_cast<int>(r1->length());
+        const auto& r2Len = static_cast<int>(r2->length());
 
         //5'      ......frontTrimmed1......|------------------------------------------|----- 3'
         //3' -----|-------------------------------------------|......frontTrimmed2.....      5'
 
-        int len1 = min(r1->length(), ol + frontTrimmed2);
-        int len2 = min(r2->length(), ol + frontTrimmed1);
-        string adapter1 = r1->mSeq->substr(len1, r1->length() - len1);
-        string adapter2 = r2->mSeq->substr(len2, r2->length() - len2);
+        int len1 = std::min(r1Len, ol + frontTrimmed2);
+        int len2 = std::min(r2Len, ol + frontTrimmed1);
+        std::string adapter1 = r1->seq().substr(len1, r1Len - len1);
+        std::string adapter2 = r2->seq().substr(len2, r2Len - len2);
 
         if(_DEBUG) {
             cerr << adapter1 << endl;
@@ -32,7 +34,7 @@ bool AdapterTrimmer::trimByOverlapAnalysis(Read* r1, Read* r2, FilterResult* fr,
             cerr << "frontTrimmed2: " << frontTrimmed2 << endl;
             cerr << "overlap:" << ov.offset << "," << ov.overlap_len << ", " << ov.diff << endl;
             r1->print();
-            r2->reverseComplement()->print();
+            r2->reverseComplement().print();
             cerr <<endl;
         }
         r1->resize(len1);

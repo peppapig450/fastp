@@ -1,10 +1,12 @@
 #include "peprocessor.h"
 #include "fastqreader.h"
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <iostream>
 #include <unistd.h>
 #include <functional>
+#include <memory>
 #include <thread>
 #include <memory.h>
 #include "read.h"
@@ -478,9 +480,14 @@ bool PairEndProcessor::processPairEnd(ReadPack* leftPack, ReadPack* rightPack, T
         if(r1 != NULL && r2!=NULL && mOverlappedWriter) {
             OverlapResult ov = OverlapAnalysis::analyze(r1, r2, mOptions->overlapDiffLimit, mOptions->overlapRequire, 0);
             if(ov.overlapped) {
-                Read* overlappedRead = new Read(new string(*r1->mName), new string(r1->mSeq->substr(max(0,ov.offset)), ov.overlap_len), new string(*r1->mStrand), new string(r1->mQuality->substr(max(0,ov.offset)), ov.overlap_len));
+                int start = std::max(0, ov.offset);
+
+                std::unique_ptr<Read> overlappedRead(
+                    new Read(r1->name(),
+                             r1->seq().substr(start, ov.overlap_len),
+                             r1->strand(),
+                             r1->quality().substr(start, ov.overlap_len)));
                 overlappedRead->appendToString(overlappedOut);
-                recycleToPool1(tid, overlappedRead);
             }
         }
 
@@ -502,22 +509,23 @@ bool PairEndProcessor::processPairEnd(ReadPack* leftPack, ReadPack* rightPack, T
                 r2->resize(mOptions->trim.maxLen2);
         }
 
-        Read* merged = NULL;
         // merging mode
         bool mergeProcessed = false;
         if(mOptions->merge.enabled && r1 && r2) {
             OverlapResult ov = OverlapAnalysis::analyze(r1, r2, mOptions->overlapDiffLimit, mOptions->overlapRequire, mOptions->overlapDiffPercentLimit/100.0);
             if(ov.overlapped) {
-                merged = OverlapAnalysis::merge(r1, r2, ov);
-                int result = mFilter->passFilter(merged);
+                auto merged = OverlapAnalysis::merge(*r1, *r2, ov);
+                Read* raw_ptr = merged.get();
+
+                int result = mFilter->passFilter(raw_ptr); // TODO: this is temporary do NOT use .get() permanently
                 config->addFilterResult(result, 2);
                 if(result == PASS_FILTER) {
                     merged->appendToString(mergedOutput);
-                    config->getPostStats1()->statRead(merged);
+                    config->getPostStats1()->statRead(raw_ptr);
                     readPassed++;
                     mergedCount++;
                 }
-                recycleToPool1(tid, merged);
+                recycleToPool1(tid, merged.release());
                 mergeProcessed = true;
             } else if(mOptions->merge.includeUnmerged){
                 int result1 = mFilter->passFilter(r1);
@@ -893,8 +901,8 @@ void PairEndProcessor::interleavedReaderTask()
             }
             break;
         }
-        dataLeft[count] = pair->mLeft;
-        dataRight[count] = pair->mRight;
+        dataLeft[count] = pair->left();
+        dataRight[count] = pair->right();
         count++;
         // configured to process only first N reads
         if(mOptions->readsToProcess >0 && count + readNum >= mOptions->readsToProcess) {

@@ -26,6 +26,8 @@ SOFTWARE.
 #include "util.h"
 #include <string.h>
 #include <cassert>
+#include <memory>
+#include <utility>
 
 #define FQ_BUF_SIZE (1<<23)
 #define IGZIP_IN_BUF_SIZE (1<<22)
@@ -287,88 +289,67 @@ void FastqReader::getLine(string* line){
 
 Read* FastqReader::read(){
 	if(mBufUsedLen >= mBufDataLen && bufferFinished()) {
-		return NULL;
+		return nullptr;
 	}
 
-	string* name;
-	string* sequence;
-	string* strand;
-	string* quality;
+	std::string name;
+	std::string sequence;
+	std::string strand;
+	std::string quality;
 
-	Read* readInPool = NULL;
-	if(mReadPool)
-		readInPool = mReadPool->getOne();
-
-	if(readInPool) {
-		name = readInPool->mName;
-		sequence = readInPool->mSeq;
-		strand = readInPool->mStrand;
-		quality = readInPool->mQuality;
-	} else {
-		name = new string();
-		sequence = new string();
-		strand = new string();
-		quality = new string();
-	}
-
-	getLine(name);
+	getLine(&name);
 	// name should start with @
-	while((name->empty() && !(mBufUsedLen >= mBufDataLen && bufferFinished())) || (!name->empty() && (*name)[0]!='@')){
-		getLine(name);
-	}
-	if(name->empty()) {
-		if(readInPool)
-			delete readInPool;
-		else {
-			delete name;
-			delete sequence;
-			delete strand;
-			delete quality;
-		}
-		return NULL;
+	while((name.empty() && (mBufUsedLen < mBufDataLen || !bufferFinished())) || (!name.empty() && name[0]!='@')){
+		getLine(&name);
 	}
 
-	getLine(sequence);
-	getLine(strand);
-	getLine(quality);
+	if (name.empty()) {
+		return nullptr;
+	}
 
-	if (strand->empty() || (*strand)[0]!='+') {
-		cerr << *name << endl;
-		cerr << "Expected '+', got " << *strand << endl;
+	getLine(&sequence);
+	getLine(&strand);
+	getLine(&quality);
+
+	if (strand.empty() || strand[0]!='+') {
+		cerr << name << endl;
+		cerr << "Expected '+', got " << strand << endl;
 		cerr << "Your FASTQ may be invalid, please check the tail of your FASTQ file" << endl;
-		if(readInPool)
-			delete readInPool;
-		else {
-			delete name;
-			delete sequence;
-			delete strand;
-			delete quality;
-		}
-		return NULL;
+
+		return nullptr;
 	}
 
-	if(quality->length() != sequence->length()) {
+	if(quality.length() != sequence.length()) {
 		cerr << "ERROR: sequence and quality have different length:" << endl;
-		cerr << *name << endl;
-		cerr << *sequence << endl;
-		cerr << *strand << endl;
-		cerr << *quality << endl;
+		cerr << name << endl;
+		cerr << sequence << endl;
+		cerr << strand << endl;
+		cerr << quality << endl;
 		cerr << "Your FASTQ may be invalid, please check the tail of your FASTQ file" << endl;
-		if(readInPool)
-			delete readInPool;
-		else {
-			delete name;
-			delete sequence;
-			delete strand;
-			delete quality;
-		}
-		return NULL;
+
+		return nullptr;
 	}
 
-	if(readInPool)
-		return readInPool;
-	else
-		return new Read(name, sequence, strand, quality, mPhred64);
+    Read* readInPool = nullptr;
+    if (mReadPool != nullptr) {
+        readInPool = mReadPool->getOne();
+    }
+
+    if (readInPool != nullptr) {
+        // Update the pooled read's contents
+        *readInPool = Read(std::move(name),
+                           std::move(sequence),
+                           std::move(strand),
+                           std::move(quality),
+                           mPhred64);
+        return readInPool;
+    }
+
+    return new Read(std::move(name),
+                    std::move(sequence),
+                    std::move(strand),
+                    std::move(quality),
+                    mPhred64);
 }
 
 void FastqReader::close(){
@@ -463,6 +444,7 @@ ReadPair* FastqReaderPair::read(){
 	if(!l || !r){
 		return NULL;
 	} else {
-		return new ReadPair(l, r);
+		// TODO: should probably update the function that returns these instead of wrapping here
+		return new ReadPair(std::unique_ptr<Read>(l), std::unique_ptr<Read>(r));
 	}
 }

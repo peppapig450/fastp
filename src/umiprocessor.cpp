@@ -12,20 +12,26 @@ void UmiProcessor::process(Read* r1, Read* r2) {
     if(!mOptions->umi.enabled)
         return;
 
+    const auto& r1Len       = static_cast<int>(r1->length());
+    const auto& r2Len       = static_cast<int>(r2->length());
+    const auto& umiLocation = mOptions->umi.location;
+    const auto& umiLen      = mOptions->umi.length;
+    const auto& umiSkip     = mOptions->umi.skip;
+
     string umi;
-    if(mOptions->umi.location == UMI_LOC_INDEX1)
+    if(umiLocation == UMI_LOC_INDEX1)
         umi = r1->firstIndex();
-    else if(mOptions->umi.location == UMI_LOC_INDEX2 && r2)
+    else if(umiLocation == UMI_LOC_INDEX2 && r2)
         umi = r2->lastIndex();
-    else if(mOptions->umi.location == UMI_LOC_READ1){
-        umi = r1->mSeq->substr(0, min(r1->length(), mOptions->umi.length));
-        r1->trimFront(umi.length() + mOptions->umi.skip);
+    else if(umiLocation == UMI_LOC_READ1){
+        umi = r1->seq().substr(0, std::min(r1Len, umiLen));
+        r1->trimFront(umi.length() + umiSkip);
     }
-    else if(mOptions->umi.location == UMI_LOC_READ2 && r2){
-        umi = r2->mSeq->substr(0, min(r2->length(), mOptions->umi.length));
-        r2->trimFront(umi.length() + mOptions->umi.skip);
+    else if(umiLocation == UMI_LOC_READ2 && r2){
+        umi = r2->seq().substr(0, std::min(r2Len, umiLen));
+        r2->trimFront(umi.length() + umiSkip);
     }
-    else if(mOptions->umi.location == UMI_LOC_PER_INDEX){
+    else if(umiLocation == UMI_LOC_PER_INDEX){
         string umiMerged = r1->firstIndex();
         if(r2) {
             umiMerged = umiMerged + "_" + r2->lastIndex();
@@ -36,14 +42,13 @@ void UmiProcessor::process(Read* r1, Read* r2) {
             addUmiToName(r2, umiMerged);
         }
     }
-    else if(mOptions->umi.location == UMI_LOC_PER_READ){
-        string umi1 = r1->mSeq->substr(0, min(r1->length(), mOptions->umi.length));
-        string umiMerged = umi1;
-        r1->trimFront(umi1.length() + mOptions->umi.skip);
+    else if(umiLocation == UMI_LOC_PER_READ){
+        string umiMerged = r1->seq().substr(0, std::min(r1Len, umiLen));
+        r1->trimFront(umiMerged.length() + umiSkip);
         if(r2){
-            string umi2 = r2->mSeq->substr(0, min(r2->length(), mOptions->umi.length));
+            string umi2 = r2->seq().substr(0, std::min(r2Len, umiLen));
             umiMerged = umiMerged + "_" + umi2;
-            r2->trimFront(umi2.length() + mOptions->umi.skip);
+            r2->trimFront(umi2.length() + umiSkip);
         }
 
         addUmiToName(r1, umiMerged);
@@ -52,7 +57,7 @@ void UmiProcessor::process(Read* r1, Read* r2) {
         }
     }
 
-    if(mOptions->umi.location != UMI_LOC_PER_INDEX && mOptions->umi.location != UMI_LOC_PER_READ) {
+    if(umiLocation != UMI_LOC_PER_INDEX && umiLocation != UMI_LOC_PER_READ) {
         if(r1 && !umi.empty()) 
             addUmiToName(r1, umi);
         if(r2 && !umi.empty())

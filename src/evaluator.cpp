@@ -90,7 +90,7 @@ void Evaluator::computeOverRepSeq(string filename, std::unordered_map<string, lo
         for(int s=0; s<5; s++) {
             int step = steps[s];
             for(int i=0; i<rlen-step; i++) {
-                string seq = r->mSeq->substr(i, step);
+                string seq = r->seq().substr(i, step);
                 if(seqCounts.count(seq)>0)
                     seqCounts[seq]++;
                 else
