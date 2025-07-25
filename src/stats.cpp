@@ -148,8 +148,8 @@ void Stats::summarize(bool forced) {
     }
 
     // quality curves and base content curves for different nucleotides
-    constexpr std::size_t BaseCount = Stats::QualityCurveSize - 1;
-    for (std::size_t i = 0; i < BaseCount; i++) {
+    constexpr std::size_t QualityBaseCount = Stats::QualityCurveSize - 1;
+    for (std::size_t i = 0; i < QualityBaseCount; i++) {
         const auto& key = QualityOrder[i];
         char base = QualityNames[i][0]; // "A", "T", "C", "G"
         std::size_t baseIdx = baseIndex(base);
