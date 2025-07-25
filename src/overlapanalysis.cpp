@@ -1,5 +1,7 @@
 #include "matcher.h"
 #include "overlapanalysis.h"
+#include <memory>
+#include <string>
 
 OverlapAnalysis::OverlapAnalysis(){
 }
@@ -197,22 +199,105 @@ Read* OverlapAnalysis::merge(Read* r1, Read* r2, OverlapResult ov) {
     return mergedRead;
 }
 
-bool OverlapAnalysis::test(){
-    //Sequence r1("CAGCGCCTACGGGCCCCTTTTTCTGCGCGACCGCGTGGCTGTGGGCGCGGATGCCTTTGAGCGCGGTGACTTCTCACTGCGTATCGAGCCGCTGGAGGTCTCCC");
-    //Sequence r2("ACCTCCAGCGGCTCGATACGCAGTGAGAAGTCACCGCGCTCAAAGGCATCCGCGCCCACAGCCACGCGGTCGCGCAGAAAAAGGGGCCCGTAGGCGCGGCTCCC");
+bool OverlapAnalysis::test() {
+    // Sequence
+    // r1("CAGCGCCTACGGGCCCCTTTTTCTGCGCGACCGCGTGGCTGTGGGCGCGGATGCCTTTGAGCGCGGTGACTTCTCACTGCGTATCGAGCCGCTGGAGGTCTCCC");
+    // Sequence
+    // r2("ACCTCCAGCGGCTCGATACGCAGTGAGAAGTCACCGCGCTCAAAGGCATCCGCGCCCACAGCCACGCGGTCGCGCAGAAAAAGGGGCCCGTAGGCGCGGCTCCC");
 
-    string* r1 = new string("CAGCGCCTACGGGCCCCTTTTTCTGCGCGACCGCGTGGCTGTGGGCGCGGATGCCTTTGAGCGCGGTGACTTCTCACTGCGTATCGAGC");
-    string* r2 = new string("ACCTCCAGCGGCTCGATACGCAGTGAGAAGTCACCGCGCTCAAAGGCATCCGCGCCCACAGCCACGCGGTCGCGCAGAAAAAGGGGTCC");
-    string* qual1 = new string("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
-    string* qual2 = new string("#########################################################################################");
-    
-    OverlapResult ov = OverlapAnalysis::analyze(r1, r2, 2, 30, 0.2);
+    struct TestCase {
+        std::string seq1;
+        std::string seq2;
+        std::string qual1;
+        std::string qual2;
 
-    Read read1(new string("name1"), r1, new string("+"), qual1);
-    Read read2(new string("name2"), r2, new string("+"), qual2);
+        int    min_ol;
+        int    match_thr;
+        double diff_thr;
+        bool   allow_gap;
 
-    Read* mergedRead = OverlapAnalysis::merge(&read1, &read2, ov);
-    mergedRead->print();
+        // What we expect
+        bool        overlapped;
+        int         offset;
+        int         overlap_len;
+        int         diff;
+        bool        has_gap;
+        std::string merged_seq;
+        std::string merged_qual;
+    };
 
-    return ov.overlapped && ov.offset == 10 && ov.overlap_len == 79 && ov.diff == 1;
+    auto runTestCase = [&](TestCase const& tcase) -> bool {
+        // build inputs
+        auto s1 = std::unique_ptr<std::string>(new std::string(tcase.seq1));
+        auto s2 = std::unique_ptr<std::string>(new std::string(tcase.seq2));
+        auto q1 = std::unique_ptr<std::string>(new std::string(tcase.qual1));
+        auto q2 = std::unique_ptr<std::string>(new std::string(tcase.qual2));
+
+        // run analyze
+        auto overlapResult = OverlapAnalysis::analyze(s1.get(),
+                                                      s2.get(),
+                                                      tcase.min_ol,
+                                                      tcase.match_thr,
+                                                      tcase.diff_thr,
+                                                      tcase.allow_gap);
+
+        bool resultMatchExpectations =
+            overlapResult.overlapped == tcase.overlapped && overlapResult.offset == tcase.offset
+            && overlapResult.overlap_len == tcase.overlap_len && overlapResult.diff == tcase.diff
+            && overlapResult.hasGap == tcase.has_gap;
+
+        // Wrap into Reads and merge
+        Read r1 {new std::string("n1"), s1.release(), new std::string("+"), q1.release()};
+        Read r2 {new std::string("n2"), s2.release(), new std::string("+"), q2.release()};
+        std::unique_ptr<Read> merged {OverlapAnalysis::merge(&r1, &r2, overlapResult)};
+
+        if (tcase.overlapped) {
+            resultMatchExpectations &= merged && *merged->mSeq == tcase.merged_seq
+                                       && *merged->mQuality == tcase.merged_qual;
+        } else {
+            resultMatchExpectations &= (merged == nullptr);
+        }
+        return resultMatchExpectations;
+    };
+
+    std::array<TestCase, 5> cases {{
+        // perfect rc overlap
+        // clang-format off
+        { "ACGTACGT","ACGTACGT", "HHHHHHHH","IIIIIIII",
+          0,4,0.1,false,
+          true,  0,8,0,false,
+          "ACGTACGT","HHHHHHHH"
+        },
+        // positive offset
+        { "AAAAGGGG","AACCCCTT", "HHHHHHHH","IIIIIIII",
+          0,4,0.1,false,
+          true,  2,6,0,false,
+          "AAAAGGGGTT","HHHHHHHHII"
+        },
+        // negative offset
+        { "GGGGAAAA","TTTTCCCCAA","JJJJJJJJ","KKKKKKKKKK",
+          0,4,0.1,false,
+          true, -2,8,0,false,
+          "GGGGAAAA","JJJJJJJJ"
+        },
+        // gap allowed
+        { "ACGTAACGT","ACGTACGT","LLLLLLLLL","MMMMMMMM",
+          1,4,0.3,true,
+          true,  0,8,0,true,
+          "ACGTAACG","LLLLLLLL"
+        },
+        // no overlap
+        { "AAAA","CCCC","NNNN","OOOO",
+          0,3,0.1,false,
+          false,0,0,0,false,
+          "",""
+        }  // clang-format on
+    }};
+
+    bool passedTests = true;
+    for (auto const& tcase : cases) {
+        passedTests &= runTestCase(tcase);
+    }
+
+    return passedTests;
 }
