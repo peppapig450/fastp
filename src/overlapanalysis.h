@@ -1,38 +1,57 @@
-#ifndef OVERLAP_ANALYSIS_H
-#define OVERLAP_ANALYSIS_H
+#pragma once
 
-#include <iostream>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string>
-#include <vector>
-#include "common.h"
-#include "options.h"
+#include <memory>
+
 #include "read.h"
 
-using namespace std;
+struct OverlapResult {
+    bool overlapped {false};
+    // reverse_seq (RC) is shifted right (positive) / left (negative) vs forward_read
+    int  offset {0};
+    int  overlap_len {0};
+    int  diff {0};
+    bool hasGap {false};
 
-class OverlapResult {
-public:
-    bool overlapped;
-    int offset;
-    int overlap_len;
-    int diff;
-    bool hasGap;
+    // We define our own constructor (ctor) to enable list init of all the contents
+    OverlapResult(bool overlapped_, int offset_, int overlap_len_, int diff_, bool has_gap_)
+        : overlapped(overlapped_)
+        , offset(offset_)
+        , overlap_len(overlap_len_)
+        , diff(diff_)
+        , hasGap(has_gap_) {}
+
+    OverlapResult() = default;
 };
 
-class OverlapAnalysis{
+class OverlapAnalysis {
 public:
-    OverlapAnalysis();
-    ~OverlapAnalysis();
+    // All members are static so we disallow instantiation
+    OverlapAnalysis()  = delete;
+    ~OverlapAnalysis() = delete;
 
-    static OverlapResult analyze(string*  r1, string*  r2, int diffLimit, int overlapRequire, double diffPercentLimit, bool allowGap = false);
-    static OverlapResult analyze(Read* r1, Read* r2, int diffLimit, int overlapRequire, double diffPercentLimit, bool allowGap = false);
-    static Read* merge(Read* r1, Read* r2, OverlapResult ov);
+    static auto analyze(const std::string& forward_read,
+                        const std::string& reverse_rc_read,
+                        int                diff_limit,
+                        int                min_overlap_len,
+                        double             diff_percent_limit,
+                        bool               allow_gap = false) -> OverlapResult;
 
-public:
-    static bool test();
+    static auto analyze(const Read& forward_read,
+                        const Read& reverse_rc_read,
+                        int         diff_limit,
+                        int         min_overlap_len,
+                        double      diff_percent_limit,
+                        bool        allow_gap = false) -> OverlapResult;
 
+    static auto analyze(const Read* forward_read,
+                        const Read* reverse_rc_read,
+                        int         diff_limit,
+                        int         min_overlap_len,
+                        double      diff_percent_limit,
+                        bool        allow_gap = false) -> OverlapResult;
+
+    static auto merge(const Read& read1, const Read& read2, const OverlapResult& result)
+        -> std::unique_ptr<Read>;
+
+    static auto test() -> bool;
 };
-
-#endif

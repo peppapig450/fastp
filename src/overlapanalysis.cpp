@@ -1,211 +1,370 @@
-#include "matcher.h"
 #include "overlapanalysis.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdlib>
 #include <memory>
 #include <string>
+#include <utility>
+
+#include "cassert"
+#include "matcher.h"
+#include "read.h"
 #include "sequence.h"
 
-OverlapAnalysis::OverlapAnalysis(){
+// Use anonymous namespace for internal linkage, this avoids static and is more preferred
+// in modern C++.
+namespace {  // (anon)
+
+// Static scan configuration
+struct ScanConfig {
+    const char* forward_read;
+    const char* reverse_rc_read;
+    std::size_t forward_read_len;
+    std::size_t reverse_rc_read_len;
+    int         min_overlap_len;
+    int         diff_limit;
+    double      diff_percent_limit;
+    bool        reverse; /* false = forward, true = reverse */
+};
+
+// Dynamic data for *one* offset
+struct IterContext {
+    int         offset;
+    std::size_t overlap_len;
+    int         overlap_diff_limit;
+    int         direction_step;
+};
+
+// Generic overlap-scanner
+// Scans for overlaps using a strategy-based template approach.
+// The scanning logic is decoupled from the overlap evaluation using lambdas.
+//
+// Benefits:
+// - Separation of concerns: iteration and evaluation are independent
+// - Reusability: shared logic for no-gap and gap-aware variants
+// - Zero-cost abstraction via inlined lambdas
+// - Compile-time safety through template-based evaluator signatures
+// - Easier maintenance: scanning logic centralized
+//
+// The evaluator lambda takes an IterContext (current offset info) and returns
+// true if an overlap is found (to stop early), false to continue scanning.
+template <class OffsetEvaluator>
+inline auto scanOverlaps(const ScanConfig& config,
+                         OverlapResult&    result,
+                         OffsetEvaluator&& evaluator) -> bool {
+    const int direction_step = config.reverse ? -1 : 1;
+    int       offset         = 0;
+
+    const auto min_overlap_len = config.min_overlap_len;
+    while (
+        (config.reverse && offset > -static_cast<int>(config.reverse_rc_read_len - min_overlap_len))
+        || (!config.reverse
+            && offset < static_cast<int>(config.forward_read_len - min_overlap_len))) {
+        std::size_t overlap_len =
+            config.reverse ? std::min<std::size_t>(config.forward_read_len,
+                                                   config.reverse_rc_read_len
+                                                       - static_cast<std::size_t>(std::abs(offset)))
+                           : std::min<std::size_t>(config.forward_read_len - offset,
+                                                   config.reverse_rc_read_len);
+
+        const auto overlap_fraction = static_cast<double>(overlap_len) * config.diff_percent_limit;
+        const auto overlap_diff_limit =
+            std::min(config.diff_limit, static_cast<int>(overlap_fraction));
+
+        // clang-format off
+        IterContext context {
+            offset,
+             overlap_len,
+             overlap_diff_limit,
+             direction_step
+        };
+        // clang-format on
+
+        if (evaluator(context, result)) {
+            return true;
+        }
+
+        offset += direction_step;
+    }
+    return false;
 }
 
+// When offset >= 0: read2_RC is shifted right; offset < 0: shifted left
+// Returns true and fill |res| on success, otherwise false.
+// TODO: maybe use const string references here
+inline auto forwardNoGap(const char*    forward_read,
+                         const char*    reverse_rc_read,
+                         std::size_t    forward_read_len,
+                         std::size_t    reverse_rc_read_len,
+                         int            min_overlap_len,
+                         int            diff_limit,
+                         double         diff_percent_limit,
+                         OverlapResult& result,
+                         bool           scan_reverse /* false = forward, true = reverse*/) -> bool {
+    constexpr int min_full_comparison_len = 50;
 
-OverlapAnalysis::~OverlapAnalysis(){
-}
+    ScanConfig config {forward_read,
+                       reverse_rc_read,
+                       forward_read_len,
+                       reverse_rc_read_len,
+                       min_overlap_len,
+                       diff_limit,
+                       diff_percent_limit,
+                       scan_reverse};
 
-OverlapResult OverlapAnalysis::analyze(Read* r1, Read* r2, int overlapDiffLimit, int overlapRequire, double diffPercentLimit, bool allowGap) {
-    return analyze(r1->mSeq, r2->mSeq, overlapDiffLimit, overlapRequire, diffPercentLimit, allowGap);
-}
+    return scanOverlaps(config, result, [=](const IterContext& ctx, OverlapResult& result) -> bool {
+        const auto& offset             = ctx.offset;
+        const auto& overlap_diff_limit = ctx.overlap_diff_limit;
 
-// ported from the python code of AfterQC
-OverlapResult OverlapAnalysis::analyze(string*  r1, string*  r2, int diffLimit, int overlapRequire, double diffPercentLimit, bool allowGap) {
-    Sequence rc2 = Sequence(*r2).reverseComplement();
-    int len1 = r1->length();
-    int len2 = rc2.length();
-    // use the pointer directly for speed
-    const char* str1 = r1->c_str();
-    const char* str2 = rc2.str().c_str();
+        int         diff = 0;
+        std::size_t i    = 0;  // This allows us to use i outside the loop.
+        for (; i < ctx.overlap_len; ++i) {
+            const char forward_base = scan_reverse ? forward_read[i] : forward_read[offset + i];
+            const char reverse_base =
+                scan_reverse ? reverse_rc_read[std::abs(offset) + i] : reverse_rc_read[i];
 
-    int complete_compare_require = 50;
-
-    int overlap_len = 0;
-    int offset = 0;
-    int diff = 0;
-
-    // forward with no gap
-    // a match of less than overlapRequire is considered as unconfident
-    while (offset < len1-overlapRequire) {
-        // the overlap length of r1 & r2 when r2 is move right for offset
-        overlap_len = min(len1 - offset, len2);
-        int overlapDiffLimit = min(diffLimit, (int)(overlap_len * diffPercentLimit));
-
-        diff = 0;
-        int i = 0;
-        for (i=0; i<overlap_len; i++) {
-            if (str1[offset + i] != str2[i]){
-                diff += 1;
-                if (diff > overlapDiffLimit && i < complete_compare_require)
+            if (forward_base != reverse_base) {
+                ++diff;
+                if (diff > overlap_diff_limit && static_cast<int>(i) < min_full_comparison_len) {
                     break;
+                }
             }
         }
-        
-        if (diff <= overlapDiffLimit || (diff > overlapDiffLimit && i>complete_compare_require)){
-            OverlapResult ov;
-            ov.overlapped = true;
-            ov.offset = offset;
-            ov.overlap_len = overlap_len;
-            ov.diff = diff;
-            ov.hasGap = false;
-            return ov;
+
+        bool accept =
+            diff <= overlap_diff_limit
+            || (diff > overlap_diff_limit && static_cast<int>(i) > min_full_comparison_len);
+
+        if (accept) {
+            // clang-format off
+            result = {
+                true,
+                offset,
+                static_cast<int>(ctx.overlap_len),
+                diff, false
+            };
+            // clang-format on
         }
-
-        offset += 1;
-    }
-
-
-    // reverse with no gap
-    // in this case, the adapter is sequenced since TEMPLATE_LEN < SEQ_LEN
-    // check if distance can get smaller if offset goes negative
-    // this only happens when insert DNA is shorter than sequencing read length, and some adapter/primer is sequenced but not trimmed cleanly
-    // we go reversely
-    offset = 0;
-    while (offset > -(len2-overlapRequire)){
-        // the overlap length of r1 & r2 when r2 is move right for offset
-        overlap_len = min(len1,  len2- abs(offset));
-        int overlapDiffLimit = min(diffLimit, (int)(overlap_len * diffPercentLimit));
-
-        diff = 0;
-        int i = 0;
-        for (i=0; i<overlap_len; i++) {
-            if (str1[i] != str2[-offset + i]){
-                diff += 1;
-                if (diff > overlapDiffLimit && i < complete_compare_require)
-                    break;
-            }
-        }
-        
-        if (diff <= overlapDiffLimit || (diff > overlapDiffLimit && i>complete_compare_require)){
-            OverlapResult ov;
-            ov.overlapped = true;
-            ov.offset = offset;
-            ov.overlap_len = overlap_len;
-            ov.diff = diff;
-            ov.hasGap = false;
-            return ov;
-        }
-
-        offset -= 1;
-    }
-
-    if(allowGap) {
-        // forward with one gap
-        offset = 0;
-        while (offset < len1-overlapRequire) {
-            // the overlap length of r1 & r2 when r2 is move right for offset
-            overlap_len = min(len1 - offset, len2);
-            int overlapDiffLimit = min(diffLimit, (int)(overlap_len * diffPercentLimit));
-
-            // Ensure the overlap length is valid
-            if (overlap_len <= 1 || offset >= len1) {
-                offset += 1;
-                continue;
-            }
-
-            int diff = Matcher::diffWithOneInsertion(str1 + offset, str2, overlap_len-1, overlapDiffLimit);
-            if(diff <0 || diff > overlapDiffLimit)
-                diff = Matcher::diffWithOneInsertion(str2, str1 + offset, overlap_len-1, overlapDiffLimit);
-            
-            if (diff <= overlapDiffLimit && diff >=0){
-                OverlapResult ov;
-                ov.overlapped = true;
-                ov.offset = offset;
-                ov.overlap_len = overlap_len;
-                ov.diff = diff;
-                ov.hasGap = true;
-                return ov;
-            }
-
-            offset += 1;
-        }
-
-        // reverse with one gap
-        offset = 0;
-        while (offset > -(len2-overlapRequire)){
-            // the overlap length of r1 & r2 when r2 is move right for offset
-            overlap_len = min(len1,  len2- abs(offset));
-            int overlapDiffLimit = min(diffLimit, (int)(overlap_len * diffPercentLimit));
-
-            // Ensure we have a valid overlap length and don't exceed bounds
-            if (overlap_len <= 1 || std::abs(offset) >= len2) {
-                offset -= 1;
-                continue;
-            }
-
-            // Ensure we do not go beyond string bounds
-            const char* shifted_str2 = str2 + std::abs(offset);
-
-            int diff = Matcher::diffWithOneInsertion(str1, shifted_str2, overlap_len-1, overlapDiffLimit);
-            if(diff <0 || diff > overlapDiffLimit)
-                diff = Matcher::diffWithOneInsertion(shifted_str2, str1, overlap_len-1, overlapDiffLimit);
-            
-            if (diff <= overlapDiffLimit && diff >=0){
-                OverlapResult ov;
-                ov.overlapped = true;
-                ov.offset = offset;
-                ov.overlap_len = overlap_len;
-                ov.diff = diff;
-                ov.hasGap = true;
-                return ov;
-            }
-
-            offset -= 1;
-        }
-    }
-
-    OverlapResult ov;
-    ov.overlapped = false;
-    ov.offset = ov.overlap_len = ov.diff = 0;
-    ov.hasGap = false;
-    return ov;
+        return accept;
+    });
 }
 
-Read* OverlapAnalysis::merge(Read* r1, Read* r2, OverlapResult ov) {
-    int ol = ov.overlap_len;
-    if(!ov.overlapped)
-        return NULL;
+// Gap-aware branch using Matcher helpers
+inline auto gapPass(const char*    forward_read,
+                    const char*    reverse_rc_read,
+                    std::size_t    forward_read_len,
+                    std::size_t    reverse_rc_read_len,
+                    int            min_overlap_len,
+                    int            diff_limit,
+                    double         diff_percent_limit,
+                    OverlapResult& result,
+                    bool           scan_reverse) -> bool {
+    ScanConfig config {forward_read,
+                       reverse_rc_read,
+                       forward_read_len,
+                       reverse_rc_read_len,
+                       min_overlap_len,
+                       diff_limit,
+                       diff_percent_limit,
+                       scan_reverse};
 
-    int len1 = ol + max(0, ov.offset);
-    int len2 = 0; 
-    if(ov.offset > 0)
-        len2 = r2->length() - ol;
+    return scanOverlaps(config, result, [=](const IterContext ctx, OverlapResult& result) -> bool {
+        // Early exit if length is less than or equal to one
+        if (ctx.overlap_len <= 1) {
+            return false;
+        }
 
-    Read* rr2 = r2->reverseComplement();
-    string mergedSeq = r1->mSeq->substr(0, len1);
-    if(ov.offset > 0) {
-        mergedSeq += rr2->mSeq->substr(ol, len2);
+        const auto& offset             = ctx.offset;
+        const auto& overlap_len        = ctx.overlap_len;
+        const auto& overlap_diff_limit = ctx.overlap_diff_limit;
+
+        // TODO: investigate whether using constant string references here offers performance gains,
+        // that would require updating Matcher to take references instead of pointers, and also
+        // eliminates the need to use __restrict for pointer aliasing there.
+        const char* left_read = scan_reverse ? forward_read : forward_read + offset;
+        const char* right_read =
+            scan_reverse ? reverse_rc_read + std::abs(offset) : reverse_rc_read;
+
+        const auto overlap_compare_len = static_cast<int>(overlap_len - 1);
+
+        // TODO: probably should adjust the function params in Matcher::diffWithOneInsertion
+        // our usage of left/right here does't really match the 'insertion/normal Data' that it
+        // uses.
+        int diff = Matcher::diffWithOneInsertion(left_read,
+                                                 right_read,
+                                                 overlap_compare_len,
+                                                 overlap_diff_limit);
+
+        if (diff < 0 || diff > overlap_diff_limit) {
+            diff = Matcher::diffWithOneInsertion(right_read,
+                                                 left_read,
+                                                 overlap_compare_len,
+                                                 overlap_diff_limit);
+        }
+
+        if (diff >= 0 && diff <= overlap_diff_limit) {
+            // clang-format off
+            result = {
+                true,
+                offset,
+                static_cast<int>(overlap_len),
+                diff,
+                true
+            };
+            // clang-format on
+        }
+        return false;
+    });
+}
+}  // namespace
+
+auto OverlapAnalysis::analyze(const std::string& forward_read,
+                              const std::string& reverse_rc_read,
+                              int                diff_limit,
+                              int                min_overlap_len,
+                              double             diff_percent_limit,
+                              bool               allow_gap) -> OverlapResult {
+    assert(min_overlap_len > 0 && "min_overlap_len must be positive");
+
+    Sequence    reverse_rc = Sequence(reverse_rc_read).reverseComplement();
+    const auto& rev_str    = reverse_rc.str();
+
+    // TODO: figure out if raw pointers here are actually faster
+    const char*       forward_str        = forward_read.c_str();
+    const char*       reverse_rc_str     = rev_str.c_str();
+    const std::size_t forward_str_len    = forward_read.length();
+    const std::size_t reverse_rc_str_len = reverse_rc.length();
+
+    OverlapResult result;
+
+    // Forward, no gap
+    if (forwardNoGap(forward_str,
+                     reverse_rc_str,
+                     forward_str_len,
+                     reverse_rc_str_len,
+                     min_overlap_len,
+                     diff_limit,
+                     diff_percent_limit,
+                     result,
+                     /*scan_reverse=*/false)) {
+        return result;
     }
 
-    string mergedQual = r1->mQuality->substr(0, len1);
-    if(ov.offset > 0) {
-        mergedQual += rr2->mQuality->substr(ol, len2);
+    // Reverse, no gap
+    if (forwardNoGap(forward_str,
+                     reverse_rc_str,
+                     forward_str_len,
+                     reverse_rc_str_len,
+                     min_overlap_len,
+                     diff_limit,
+                     diff_percent_limit,
+                     result,
+                     /*scan_reverse=*/true)) {
+        return result;
     }
 
-    delete rr2;
+    if (allow_gap) {
+        // Forward, single gap
+        if (gapPass(forward_str,
+                    reverse_rc_str,
+                    forward_str_len,
+                    reverse_rc_str_len,
+                    min_overlap_len,
+                    diff_limit,
+                    diff_percent_limit,
+                    result,
+                    /*scan_reverse=*/false)) {
+            return result;
+        }
 
-    string name = *(r1->mName) + " merged_" + to_string(len1) + "_" + to_string(len2);
-    string strand = *(r1->mStrand);
+        // Reverse, single gap
+        if (gapPass(forward_str,
+                    reverse_rc_str,
+                    forward_str_len,
+                    reverse_rc_str_len,
+                    min_overlap_len,
+                    diff_limit,
+                    diff_percent_limit,
+                    result,
+                    /*scan_reverse=*/true)) {
+            return result;
+        }
+    }
+
+    // no overlap found, we return the default constructed OverlapResult
+    return result;
+}
+
+// Thin wrapper that adapts Read -> string
+auto OverlapAnalysis::analyze(const Read& forward_read,
+                              const Read& reverse_rc_read,
+                              int         diff_limit,
+                              int         min_overlap_len,
+                              double      diff_percent_limit,
+                              bool        allow_gap) -> OverlapResult {
+    return analyze(forward_read.seq(),
+                   reverse_rc_read.seq(),
+                   diff_limit,
+                   min_overlap_len,
+                   diff_percent_limit,
+                   allow_gap);
+}
+
+// Thin wrapper for legacy pointer usage
+auto OverlapAnalysis::analyze(const Read* forward_read,
+                              const Read* reverse_rc_read,
+                              int         diff_limit,
+                              int         min_overlap_len,
+                              double      diff_percent_limit,
+                              bool        allow_gap) -> OverlapResult {
+    assert(forward_read && reverse_rc_read);
+
+    return analyze(*forward_read,
+                   *reverse_rc_read,
+                   diff_limit,
+                   min_overlap_len,
+                   diff_percent_limit,
+                   allow_gap);
+}
+
+auto OverlapAnalysis::merge(const Read& read1, const Read& read2, const OverlapResult& result)
+    -> std::unique_ptr<Read> {
+    if (!result.overlapped) {
+        return nullptr;
+    }
+
+    const auto overlap_len    = result.overlap_len;
+    const auto overlap_offset = result.offset;
+    const auto len1           = overlap_len + std::max(0, overlap_offset);
+    const auto len2 = (overlap_offset > 0) ? static_cast<int>(read2.length()) - overlap_len : 0;
+
+    // reverse complement read2 for merged tail, then discard
+    auto read2_reverse_compl =
+        std::unique_ptr<Read>(new Read(std::move(read2.reverseComplement())));
+
+    const auto len1_size = static_cast<std::size_t>(len1);
+
+    auto mergedSeq  = read1.seq().substr(0, len1_size);
+    auto mergedQual = read1.quality().substr(0, len1_size);
+
+    const auto overlap_len_size = static_cast<std::size_t>(overlap_len);
+    const auto len2_size        = static_cast<std::size_t>(len2);
+    if (overlap_offset > 0) {
+        mergedSeq += read2_reverse_compl->seq().substr(overlap_len_size, len2_size);
+        mergedQual += read2_reverse_compl->quality().substr(overlap_len_size, len2_size);
+    }
+
+    auto name   = read1.name() + " merged_" + std::to_string(len1) + "_" + std::to_string(len2);
+    auto strand = read1.strand();
     if (strand != "+") {
-      strand = strand + " merged_" + to_string(len1) + "_" + to_string(len2);
+        strand += "merged_" + std::to_string(len1) + "_" + std::to_string(len2);
     }
-    Read* mergedRead = new Read(new string(name), new string(mergedSeq), new string(strand), new string(mergedQual));
 
-    return mergedRead;
+    return std::unique_ptr<Read>(new Read(name, mergedSeq, strand, mergedQual));
 }
 
-bool OverlapAnalysis::test() {
-    // Sequence
-    // r1("CAGCGCCTACGGGCCCCTTTTTCTGCGCGACCGCGTGGCTGTGGGCGCGGATGCCTTTGAGCGCGGTGACTTCTCACTGCGTATCGAGCCGCTGGAGGTCTCCC");
-    // Sequence
-    // r2("ACCTCCAGCGGCTCGATACGCAGTGAGAAGTCACCGCGCTCAAAGGCATCCGCGCCCACAGCCACGCGGTCGCGCAGAAAAAGGGGCCCGTAGGCGCGGCTCCC");
-
+auto OverlapAnalysis::test() -> bool {
     struct TestCase {
         std::string seq1;
         std::string seq2;
@@ -229,14 +388,14 @@ bool OverlapAnalysis::test() {
 
     auto runTestCase = [&](TestCase const& tcase) -> bool {
         // build inputs
-        auto s1 = std::unique_ptr<std::string>(new std::string(tcase.seq1));
-        auto s2 = std::unique_ptr<std::string>(new std::string(tcase.seq2));
-        auto q1 = std::unique_ptr<std::string>(new std::string(tcase.qual1));
-        auto q2 = std::unique_ptr<std::string>(new std::string(tcase.qual2));
+        const std::string& s1 = tcase.seq1;
+        const std::string& s2 = tcase.seq2;
+        const std::string& q1 = tcase.qual1;
+        const std::string& q2 = tcase.qual2;
 
         // run analyze
-        auto overlapResult = OverlapAnalysis::analyze(s1.get(),
-                                                      s2.get(),
+        auto overlapResult = OverlapAnalysis::analyze(s1,
+                                                      s2,
                                                       tcase.min_ol,
                                                       tcase.match_thr,
                                                       tcase.diff_thr,
@@ -248,9 +407,9 @@ bool OverlapAnalysis::test() {
             && overlapResult.hasGap == tcase.has_gap;
 
         // Wrap into Reads and merge
-        Read r1 {new std::string("n1"), s1.release(), new std::string("+"), q1.release()};
-        Read r2 {new std::string("n2"), s2.release(), new std::string("+"), q2.release()};
-        std::unique_ptr<Read> merged {OverlapAnalysis::merge(&r1, &r2, overlapResult)};
+        Read                  r1 {"n1", s1, "+", q1};
+        Read                  r2 {"n2", s2, "+", q2};
+        std::unique_ptr<Read> merged {OverlapAnalysis::merge(r1, r2, overlapResult)};
 
         if (tcase.overlapped) {
             resultMatchExpectations &= merged && *merged->mSeq == tcase.merged_seq
