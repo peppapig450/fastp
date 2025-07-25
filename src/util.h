@@ -13,6 +13,36 @@
 
 using namespace std;
 
+// Reusable macro definitions
+
+#ifndef DEPRECATED
+
+    // First check for C++14 or better with attribute support
+    #if defined(__has_cpp_attribute)
+        #if __has_cpp_attribute(deprecated) >= 201309
+            #define DEPRECATED(msg) [[deprecated(msg)]]
+        #endif
+    #endif
+
+#endif  // DEPRECATED not defined yet
+
+#ifndef DEPRECATED
+
+    #if defined(_MSC_VER)
+        // Microsoft compiler
+        #define DEPRECATED(msg) __declspec(deprecated(msg))
+
+    #elif defined(__GNUC__) || defined(__clang__)
+        #define DEPRECATED(msg) __attribute__((deprecated(msg)))
+
+    #else
+        // Unknown or very old compiler
+        #define DEPRECATED(msg)
+
+    #endif
+
+#endif  // DEPRECATED
+
 inline char complement(char base) {
     switch(base){
         case 'A':
