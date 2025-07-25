@@ -377,7 +377,7 @@ void Stats::print() {
     std::cerr << "Q40 bases: " << mQ40Total << "(" << (mQ40Total*100.0)/mBases << "%)" << "\n";
 }
 
-void Stats::reportJson(std::ofstream& ofs, const std::string& padding) {
+void Stats::reportJson(std::ostream& ofs, const std::string& padding) {
     ofs << "{" << "\n";
 
     ofs << padding << "\t" << "\"total_reads\": " << mReads << "," << "\n";
@@ -519,7 +519,7 @@ std::string Stats::list2string(long* list, int size) {
     return ss.str();
 }
 
-void Stats::reportHtml(std::ofstream& ofs, const std::string& filteringType, const std::string& readName) {
+void Stats::reportHtml(std::ostream& ofs, const std::string& filteringType, const std::string& readName) {
     reportHtmlQuality(ofs, filteringType, readName);
     reportHtmlContents(ofs, filteringType, readName);
     reportHtmlKMER(ofs, filteringType, readName);
@@ -544,7 +544,7 @@ bool Stats::overRepPassed(std::string& seq, long count) {
     }
 }
 
-void Stats::reportHtmlORA(std::ofstream& ofs, const std::string& filteringType, const std::string& readName) {
+void Stats::reportHtmlORA(std::ostream& ofs, const std::string& filteringType, const std::string& readName) {
     // over represented seqs
     double dBases = mBases;
     std::unordered_map<std::string, long>::iterator iter;
@@ -632,7 +632,7 @@ bool Stats::isLongRead() {
     return mCycles > 300;
 }
 
-void Stats::reportHtmlKMER(std::ofstream& ofs, const std::string& filteringType, const std::string& readName) {
+void Stats::reportHtmlKMER(std::ostream& ofs, const std::string& filteringType, const std::string& readName) {
 
     // KMER
     std::string subsection = filteringType + ": " + readName + ": KMER counting";
@@ -713,7 +713,7 @@ std::string Stats::kmer2(int val) {
     return ret;
 }
 
-void Stats::reportHtmlQuality(std::ofstream& ofs, const std::string& filteringType, const std::string& readName) {
+void Stats::reportHtmlQuality(std::ostream& ofs, const std::string& filteringType, const std::string& readName) {
     // quality
     std::string subsection = filteringType + ": " + readName + ": quality";
     std::string divName = replace(subsection, " ", "_");
@@ -789,7 +789,7 @@ void Stats::reportHtmlQuality(std::ofstream& ofs, const std::string& filteringTy
     delete[] x;
 }
 
-void Stats::reportHtmlContents(std::ofstream& ofs, const std::string& filteringType, const std::string& readName) {
+void Stats::reportHtmlContents(std::ostream& ofs, const std::string& filteringType, const std::string& readName) {
     // content
     std::string subsection = filteringType + ": " + readName + ": base contents";
     std::string divName = replace(subsection, " ", "_");

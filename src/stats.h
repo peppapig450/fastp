@@ -58,13 +58,13 @@ public:
     void print();
     void summarize(bool forced = false);
     // a port of JSON report
-    void reportJson(std::ofstream& ofs, const std::string& padding);
+    void reportJson(std::ostream& ofs, const std::string& padding);
     // a port of HTML report
-    void reportHtml(std::ofstream& ofs, const std::string& filteringType, const std::string& readName);
-    void reportHtmlQuality(std::ofstream& ofs, const std::string& filteringType, const std::string& readName);
-    void reportHtmlContents(std::ofstream& ofs, const std::string& filteringType, const std::string& readName);
-    void reportHtmlKMER(std::ofstream& ofs, const std::string& filteringType, const std::string& readName);
-    void reportHtmlORA(std::ofstream& ofs, const std::string& filteringType, const std::string& readName);
+    void reportHtml(std::ostream& ofs, const std::string& filteringType, const std::string& readName);
+    void reportHtmlQuality(std::ostream& ofs, const std::string& filteringType, const std::string& readName);
+    void reportHtmlContents(std::ostream& ofs, const std::string& filteringType, const std::string& readName);
+    void reportHtmlKMER(std::ostream& ofs, const std::string& filteringType, const std::string& readName);
+    void reportHtmlORA(std::ostream& ofs, const std::string& filteringType, const std::string& readName);
     bool isLongRead();
     void initOverRepSeq();
     int getMeanLength();
