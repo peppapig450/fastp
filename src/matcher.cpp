@@ -6,14 +6,16 @@
 
 // Conditionally enable macros for compiler hints related to branch prediction
 #ifndef LIKELY_BRANCH
-    #if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER) || defined(__INTEL_LLVM_COMPILER)
+    #if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER) \
+        || defined(__INTEL_LLVM_COMPILER)
         // Hint to the compiler that the condition is likely true (used for branch prediction)
         #define LIKELY_BRANCH(x) __builtin_expect(!!(x), 1)
 
         // Hint to the compiler that the condition is likely false (used for branch prediction)
         #define UNLIKELY_BRANCH(x) __builtin_expect(!!(x), 0)
     #else
-        // MSVC and others do not support branch prediction hints so we define empty fallbacks (they have no effect)
+        // MSVC and others do not support branch prediction hints so we define empty fallbacks (they
+        // have no effect)
         #define LIKELY_BRANCH(x) (x)
         #define UNLIKELY_BRANCH(x) (x)
     #endif
@@ -43,15 +45,17 @@
 
 // Macro to apply compiler-specific restrict qualifiers for pointers.
 //
-// `RESTRICT` hints to the compiler that pointers annotated with it do NOT alias with other pointers,
-// allowing for more aggressive optimizations (e.g., vectorization, better instruction scheduling).
+// `RESTRICT` hints to the compiler that pointers annotated with it do NOT alias with other
+// pointers, allowing for more aggressive optimizations (e.g., vectorization, better instruction
+// scheduling).
 //
 // WARNING: Only apply `RESTRICT` to pointers you can *guarantee* do not alias with other pointers.
 // Misusing restrict leads to undefined behavior and quiet miscompilations.
 //
 // TLDR: Use this on local, non-overlapping buffers (e.g., scratch space) for performance wins.
 // If you’re unsure, do not use `RESTRICT`. Bad restrict is worse than no restrict.
-#if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER) || defined(__INTEL_LLVM_COMPILER)
+#if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER) \
+    || defined(__INTEL_LLVM_COMPILER)
     #define RESTRICT __restrict__
 #elif defined(_MSC_VER)
     #define RESTRICT __restrict
@@ -64,11 +68,17 @@
 // The lambda captures the parameters by value (`[=]`) and will be passed two temporary
 // buffers (allocated by `allocateAndExecute`) for tracking mismatches.
 // This keeps memory management separate from the algorithm logic.
-auto Matcher::matchWithOneInsertion(const char *insertionData, const char *normalData, int compareLength, int diffLimit)
-    -> bool {
+auto Matcher::matchWithOneInsertion(const char *insertionData,
+                                    const char *normalData,
+                                    int         compareLength,
+                                    int         diffLimit) -> bool {
     return allocateAndExecute<bool>(compareLength, [=](int *leftMismatches, int *rightMismatches) {
-        return matchWithOneInsertionImpl(
-            insertionData, normalData, compareLength, diffLimit, leftMismatches, rightMismatches);
+        return matchWithOneInsertionImpl(insertionData,
+                                         normalData,
+                                         compareLength,
+                                         diffLimit,
+                                         leftMismatches,
+                                         rightMismatches);
     });
 }
 
@@ -76,11 +86,17 @@ auto Matcher::matchWithOneInsertion(const char *insertionData, const char *norma
 //
 // The lambda captures the parameters and returns the actual difference count
 // from the internal implementation.
-auto Matcher::diffWithOneInsertion(const char *insertionData, const char *normalData, int compareLength, int diffLimit)
-    -> int {
+auto Matcher::diffWithOneInsertion(const char *insertionData,
+                                   const char *normalData,
+                                   int         compareLength,
+                                   int         diffLimit) -> int {
     return allocateAndExecute<int>(compareLength, [=](int *leftMismatches, int *rightMismatches) {
-        return diffWithOneInsertionImpl(
-            insertionData, normalData, compareLength, diffLimit, leftMismatches, rightMismatches);
+        return diffWithOneInsertionImpl(insertionData,
+                                        normalData,
+                                        compareLength,
+                                        diffLimit,
+                                        leftMismatches,
+                                        rightMismatches);
     });
 }
 
@@ -90,26 +106,28 @@ auto Matcher::diffWithOneInsertion(const char *insertionData, const char *normal
 //
 // Computes whether the two sequences differ by at most `diffLimit` mismatches.
 // *assuming exactly one insertion* has occurred in `insertionData`.
-auto Matcher::matchWithOneInsertionImpl(const char *insertionData,
-                                        const char *normalData,
-                                        int compareLength,
-                                        int diffLimit,
+auto Matcher::matchWithOneInsertionImpl(const char   *insertionData,
+                                        const char   *normalData,
+                                        int           compareLength,
+                                        int           diffLimit,
                                         int *RESTRICT leftMismatches,
                                         int *RESTRICT rightMismatches) -> bool {
     const auto lastIndex = compareLength - 1;
 
     // Step 1: Initialize the mismatch buffers at the sequence boundaries.
     // leftMismatches[0] counts mismatches at the first character.
-    // rightMismatches[lastIndex] counts mismatches at the last character (excluding the inserted element).
+    // rightMismatches[lastIndex] counts mismatches at the last character (excluding the inserted
+    // element).
     //
-    // Since `compareLength` is always > 0 (enforced by `allocateAndExecute`), these index accesses are safe.
-    leftMismatches[0] = (insertionData[0] == normalData[0]) ? 0 : 1;
+    // Since `compareLength` is always > 0 (enforced by `allocateAndExecute`), these index accesses
+    // are safe.
+    leftMismatches[0]          = (insertionData[0] == normalData[0]) ? 0 : 1;
     rightMismatches[lastIndex] = (insertionData[compareLength] == normalData[lastIndex]) ? 0 : 1;
 
     const auto tailMismatch = rightMismatches[lastIndex];
 
-    // Early exit optimization: if the mismatches at the first and last positions already exceed the allowed limit,
-    // there's no point in proceeding with further comparisons.
+    // Early exit optimization: if the mismatches at the first and last positions already exceed the
+    // allowed limit, there's no point in proceeding with further comparisons.
     if (UNLIKELY_BRANCH(leftMismatches[0] + tailMismatch > diffLimit)) {
         return false;
     }
@@ -120,11 +138,13 @@ auto Matcher::matchWithOneInsertionImpl(const char *insertionData,
     // insertionData[0..i] and normalData[0..i]. The loop breaks early if
     // at any point, the cumulative mismatches plus the tail mismatch exceed the diff limit.
     //
-    // `maxValidLeft` tracks the last valid prefix boundary where the mismatch budget is not exceeded.
+    // `maxValidLeft` tracks the last valid prefix boundary where the mismatch budget is not
+    // exceeded.
     auto maxValidLeft = lastIndex;
     UNROLL_LOOP(8)  // Unroll this loop for 8 iterations to avoid branch mispredictions
     for (int i = 1; i < compareLength; ++i) {
-        leftMismatches[i] = leftMismatches[i - 1] + static_cast<int>(insertionData[i] != normalData[i]);
+        leftMismatches[i] =
+            leftMismatches[i - 1] + static_cast<int>(insertionData[i] != normalData[i]);
         if (UNLIKELY_BRANCH(leftMismatches[i] + tailMismatch > diffLimit)) {
             maxValidLeft = i - 1;
             break;
@@ -142,18 +162,20 @@ auto Matcher::matchWithOneInsertionImpl(const char *insertionData,
     // rightMismatches[i] holds the cumulative mismatch count between
     // insertionData[i+1..end] and normalData[i..end-1].
     //
-    // The loop terminates early when the combination of right-side mismatches and the first character mismatch
-    // exceeds the allowed limit. `minValidRight` marks the earliest valid suffix boundary.
-    // Instead of flooding the rightMismatches buffer with high values, we simply track the valid range.
-    int minValidRight = 0;
-    bool rightExceeded = false;
+    // The loop terminates early when the combination of right-side mismatches and the first
+    // character mismatch exceeds the allowed limit. `minValidRight` marks the earliest valid suffix
+    // boundary. Instead of flooding the rightMismatches buffer with high values, we simply track
+    // the valid range.
+    int        minValidRight    = 0;
+    bool       rightExceeded    = false;
     const auto leftEdgeMismatch = leftMismatches[0];
 
     // Unroll this loop for 8 iterations to avoid branch mispredictions
     UNROLL_LOOP(8)
     for (int i = lastIndex - 1; i >= 0; --i) {
         const auto nextIndex = i + 1;
-        rightMismatches[i] = rightMismatches[nextIndex] + static_cast<int>(insertionData[nextIndex] != normalData[i]);
+        rightMismatches[i]   = rightMismatches[nextIndex]
+                             + static_cast<int>(insertionData[nextIndex] != normalData[i]);
         if (UNLIKELY_BRANCH(rightMismatches[i] + leftEdgeMismatch > diffLimit)) {
             minValidRight = nextIndex;
             rightExceeded = true;
@@ -167,23 +189,21 @@ auto Matcher::matchWithOneInsertionImpl(const char *insertionData,
     // and suffix (rightMismatches) mismatch counts. Positions beyond these valid
     // ranges can be skipped altogether. If no valid range remains, we can exit early.
     const auto startPos = rightExceeded ? minValidRight : 1;
-    const auto endPos = std::min(maxValidLeft + 1, compareLength);
+    const auto endPos   = std::min(maxValidLeft + 1, compareLength);
     if (startPos > endPos) {
         return false;
     }
 
     // Step 5: Evaluate feasible insertion points.
     //
-    // For each candidate insertion point, we check if the combined mismatch count of the prefix (leftMismatches)
-    // and suffix (rightMismatches) stays within the allowed threshold. The right-side count is skipped altogether
-    // if the backward pass already determined the suffix exceeds the limit (rightExceeded).
+    // For each candidate insertion point, we check if the combined mismatch count of the prefix
+    // (leftMismatches) and suffix (rightMismatches) stays within the allowed threshold. Any
+    // necessary bounds checking has been handled by previous checks, allowing direct evaluation
+    // of the mismatch counts.
     //
     // The loop breaks early on a successful match without unnecessary iterations.
     for (int i = startPos; i < endPos; ++i) {
-        const auto skipRight = rightExceeded && (i < minValidRight);
-        const auto rightCount = skipRight ? (diffLimit + 1) : rightMismatches[i];
-
-        if (LIKELY_BRANCH(leftMismatches[i - 1] + rightCount <= diffLimit)) {
+        if (LIKELY_BRANCH(leftMismatches[i - 1] + rightMismatches[i] <= diffLimit)) {
             return true;
         }
     }
@@ -199,18 +219,18 @@ auto Matcher::matchWithOneInsertionImpl(const char *insertionData,
 // Returns:
 // - The minimum number of mismatches found (0 to diffLimit)
 // - -1 if no valid insertion point meets the mismatch threshold
-auto Matcher::diffWithOneInsertionImpl(const char *insertionData,
-                                       const char *normalData,
-                                       int compareLength,
-                                       int diffLimit,
+auto Matcher::diffWithOneInsertionImpl(const char   *insertionData,
+                                       const char   *normalData,
+                                       int           compareLength,
+                                       int           diffLimit,
                                        int *RESTRICT leftMismatches,
                                        int *RESTRICT rightMismatches) -> int {
     const auto lastIndex = compareLength - 1;
 
     // Reuse the same forward and backward mismatch accumulation strategy.
-    leftMismatches[0] = (insertionData[0] == normalData[0]) ? 0 : 1;
+    leftMismatches[0]          = (insertionData[0] == normalData[0]) ? 0 : 1;
     rightMismatches[lastIndex] = (insertionData[compareLength] == normalData[lastIndex]) ? 0 : 1;
-    const auto tailMismatch = rightMismatches[lastIndex];
+    const auto tailMismatch    = rightMismatches[lastIndex];
 
     // Quick check if we can succeed at all
     if (UNLIKELY_BRANCH(leftMismatches[0] + tailMismatch > diffLimit)) {
@@ -242,7 +262,8 @@ auto Matcher::diffWithOneInsertionImpl(const char *insertionData,
     const auto leftMatchesEdge = leftMismatches[0];
     for (int i = lastIndex - 1; i >= 0; --i) {
         const auto nextIndex = i + 1;
-        rightMismatches[i] = rightMismatches[nextIndex] + ((insertionData[nextIndex] != normalData[i]) ? 1 : 0);
+        rightMismatches[i] =
+            rightMismatches[nextIndex] + ((insertionData[nextIndex] != normalData[i]) ? 1 : 0);
 
         if (UNLIKELY_BRANCH(rightMismatches[i] + leftMatchesEdge > diffLimit)) {
             minValidRight = nextIndex;
@@ -257,7 +278,7 @@ auto Matcher::diffWithOneInsertionImpl(const char *insertionData,
 
     // Determine actual range to check
     const auto startPos = rightExceeded ? minValidRight : 1;
-    const auto endPos = std::min(maxValidLeft + 1, compareLength);
+    const auto endPos   = std::min(maxValidLeft + 1, compareLength);
 
     // Early exit if no overlap
     if (UNLIKELY_BRANCH(startPos >= endPos)) {
@@ -266,18 +287,7 @@ auto Matcher::diffWithOneInsertionImpl(const char *insertionData,
 
     // Single pass through valid positions only
     for (int i = startPos; i < endPos; ++i) {
-        const auto isRightInvalid = rightExceeded && i < minValidRight;
-
-        // Skip positions we know are invalid from backward pass
-        if (UNLIKELY_BRANCH(isRightInvalid)) {
-            continue;
-        }
-
-        // For positions before minValidRight when rightExceeded=true,
-        // we know that rightMismatches[i] would be greater than diffLimit.
-        const auto rightVal = (isRightInvalid ? (diffLimit + 1) : rightMismatches[i]);
-
-        const auto totalDifferences = leftMismatches[i - 1] + rightVal;
+        const auto totalDifferences = leftMismatches[i - 1] + rightMismatches[i];
 
         if (LIKELY_BRANCH(totalDifferences <= diffLimit)) {
             minimumDifference = std::min(minimumDifference, totalDifferences);
@@ -293,7 +303,7 @@ auto Matcher::diffWithOneInsertionImpl(const char *insertionData,
 }
 
 bool Matcher::test() {
-    const char *normal = "ACGTAC";
+    const char *normal  = "ACGTAC";
     const char *withIns = "ACGTTAC";  // insert T in the middle
 
     if (!matchWithOneInsertion(withIns, normal, 6, 1)) {
@@ -302,7 +312,8 @@ bool Matcher::test() {
     }
     int diff = diffWithOneInsertion(withIns, normal, 6, 1);
     if (diff != 0) {
-        std::cerr << "diffWithOneInsertion expected 0 but got " << diff << " for insertion case" << std::endl;
+        std::cerr << "diffWithOneInsertion expected 0 but got " << diff << " for insertion case"
+                  << std::endl;
         return false;
     }
 
@@ -313,7 +324,8 @@ bool Matcher::test() {
     }
     diff = diffWithOneInsertion(withMismatch, normal, 6, 2);
     if (diff != 1) {
-        std::cerr << "diffWithOneInsertion expected 1 but got " << diff << " for mismatch case" << std::endl;
+        std::cerr << "diffWithOneInsertion expected 1 but got " << diff << " for mismatch case"
+                  << std::endl;
         return false;
     }
 
@@ -324,7 +336,8 @@ bool Matcher::test() {
     }
     diff = diffWithOneInsertion(withMismatch, normal, 6, 0);
     if (diff != -1) {
-        std::cerr << "diffWithOneInsertion expected -1 but got " << diff << " when diffLimit=0" << std::endl;
+        std::cerr << "diffWithOneInsertion expected -1 but got " << diff << " when diffLimit=0"
+                  << std::endl;
         return false;
     }
 
