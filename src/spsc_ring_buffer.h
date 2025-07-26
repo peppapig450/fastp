@@ -2,14 +2,14 @@
 
 #include <array>
 #include <atomic>
-#include <cstddef>
-#include <memory>
 #include <cassert>
+#include <chrono>
+#include <cstddef>
 #include <cstdlib>
+#include <memory>
 #include <new>
 #include <thread>
 #include <type_traits>
-#include <chrono>
 
 #if (defined(__x86_64__) || defined(__i386__))                       \
     && (defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER) \
@@ -47,20 +47,22 @@ inline void cpu_pause() noexcept {
 }
 }  // namespace
 
-template<typename ItemType>
+template <typename ItemType>
 class SPSCRingBuffer {
 private:
     // Cache line size for avoiding false sharing
     static constexpr std::size_t CACHE_LINE_SIZE = 64;
 
     // Backoff strategy parameters
-    static constexpr int MAX_SPINS = 2000;  // Max spins before sleeping
+    static constexpr int MAX_SPINS       = 2000;  // Max spins before sleeping
     static constexpr int YIELD_THRESHOLD = 128;   // when to switch from pause to yield
-    static constexpr std::chrono::microseconds SLEEP_DURATION{10};
+    static constexpr std::chrono::microseconds SLEEP_DURATION {10};
 
     // Ensure capacity is power of 2 for efficient masking
     static auto roundUpToPowerOf2(std::size_t n) -> std::size_t {
-        if (n <= 1) { return 2; }
+        if (n <= 1) {
+            return 2;
+        }
         n--;
         n |= n >> 1;
         n |= n >> 2;
@@ -83,7 +85,7 @@ private:
     };
 
     void backoff(int& spin_count) {
-        backoff_impl(spin_count, [](/* nothing */){});
+        backoff_impl(spin_count, [](/* nothing */) {});
     }
 
     template <typename OnLongWaitCallback>
@@ -106,25 +108,24 @@ private:
             ++spin_count;
         } else {
             // Phase 3: long wait detected, execute callback and sleep
-            on_long_wait();             // Execute user callback (inlined)
-            std::this_thread::sleep_for(SLEEP_DURATION); // microsecond sleep
-            spin_count = 0;             // reset cycle
+            on_long_wait();                               // Execute user callback (inlined)
+            std::this_thread::sleep_for(SLEEP_DURATION);  // microsecond sleep
+            spin_count = 0;                               // reset cycle
         }
     }
 
-// TODO: figure out a better tuned default, or have size dynamically calculated by
-// calling code.
+    // TODO: figure out a better tuned default, or have size dynamically calculated by
+    // calling code.
 public:
     explicit SPSCRingBuffer(size_t capacity = static_cast<long>(8) * 1024 * 1024)
-        : capacity_(roundUpToPowerOf2(capacity))
+        : producer_finished_ {false}
+        , capacity_(roundUpToPowerOf2(capacity))
         , mask_(capacity_ - 1)
         , buffer_(std::unique_ptr<ItemType[]>(new ItemType[capacity_]))
-        , producer_finished_{false}
-        , consumer_finished_{false}
-        , pressure_events_{0} {
-
+        , pressure_events_ {0}
+        , consumer_finished_ {false} {
         static_assert(std::is_trivially_move_constructible<ItemType>::value,
-                    "T must be trivially move-constructable");
+                      "T must be trivially move-constructable");
 
         // Ensure minimum capacity
         assert(capacity_ >= 2);
@@ -134,7 +135,7 @@ public:
 
     // Ensure allocation is properly aligned for CacheAlignedAtomic
     auto operator new(std::size_t size) -> void* {
-        void* ptr = nullptr;
+        void*                 ptr       = nullptr;
         constexpr std::size_t alignment = alignof(CacheAlignedAtomic);
 
     #if defined(_MSC_VER)
@@ -159,20 +160,20 @@ public:
     }
 
     // Non-copyable, non-movable
-    SPSCRingBuffer(const SPSCRingBuffer&) = delete;
+    SPSCRingBuffer(const SPSCRingBuffer&)                    = delete;
     auto operator=(const SPSCRingBuffer&) -> SPSCRingBuffer& = delete;
-    SPSCRingBuffer(SPSCRingBuffer&&) = delete;
-    auto operator=(SPSCRingBuffer&&) -> SPSCRingBuffer& = delete;
+    SPSCRingBuffer(SPSCRingBuffer&&)                         = delete;
+    auto operator=(SPSCRingBuffer&&) -> SPSCRingBuffer&      = delete;
 
     // Producer interface
     template <typename InputItem>
     void produce(InputItem&& item) {
         int spin_count = 0;
- 
+
         // Rather than always succeeding as the original does which allocates more memory
         // we spin until we can produce (when the buffer has space)
         while (true) {
-            const std::size_t head = head_.value.load(std::memory_order_relaxed);
+            const std::size_t head      = head_.value.load(std::memory_order_relaxed);
             const std::size_t next_head = head + 1;
 
             // Check if buffer is full (accounts for keeping 1 slot empty)
@@ -187,16 +188,15 @@ public:
 
             // Buffer is full: backoff with pressure tracking
             // Lambda captures 'this' to increment pressure counter on long waits
-            backoff(spin_count, [this]() {
-                pressure_events_.fetch_add(1, std::memory_order_relaxed);
-            });
+            backoff(spin_count,
+                    [this]() { pressure_events_.fetch_add(1, std::memory_order_relaxed); });
         }
     }
 
     // Non-blocking version using perfect forwarding
     template <typename InputItem>
     auto tryProduce(InputItem&& item) -> bool {
-        const std::size_t head = head_.value.load(std::memory_order_relaxed);
+        const std::size_t head      = head_.value.load(std::memory_order_relaxed);
         const std::size_t next_head = head + 1;
 
         if (next_head - tail_.value.load(std::memory_order_acquire) >= capacity_) {
@@ -214,12 +214,12 @@ public:
 
         // Check if buffer is empty
         if (tail == head_.value.load(std::memory_order_acquire)) {
-            return false; // Buffer empty
+            return false;  // Buffer empty
         }
 
         // Load item and release slot to producer
         item = std::move(buffer_[tail & mask_]);
-        tail_.value.store(tail +  1, std::memory_order_release);
+        tail_.value.store(tail + 1, std::memory_order_release);
         return true;
     }
 
@@ -265,7 +265,7 @@ public:
 
             // Buffer empty: check if producer is done
             if (producer_finished_.load(std::memory_order_acquire)) {
-                return ItemType{}; // Return default constructed item if producer finished
+                return ItemType {};  // Return default constructed item if producer finished
             }
 
             // Buffer emtpy but producer still active: backoff without callback
@@ -287,9 +287,7 @@ public:
         return tail != head;
     }
 
-    auto empty() const noexcept -> bool {
-        return !canConsume();
-    }
+    auto empty() const noexcept -> bool { return !canConsume(); }
 
     auto size() const noexcept -> std::size_t {
         const std::size_t head = head_.value.load(std::memory_order_acquire);
@@ -298,17 +296,13 @@ public:
     }
 
     auto capacity() const noexcept -> std::size_t {
-        return capacity_ - 1;   // Keep 1 slot reserved for empty/full distinction
+        return capacity_ - 1;  // Keep 1 slot reserved for empty/full distinction
     }
 
     // Lifecycle management for producer/consumers
-    void setProducerFinished() {
-        producer_finished_.store(true, std::memory_order_release);
-    }
+    void setProducerFinished() { producer_finished_.store(true, std::memory_order_release); }
 
-    void setConsumerFinished() {
-        consumer_finished_.store(true, std::memory_order_release);
-    }
+    void setConsumerFinished() { consumer_finished_.store(true, std::memory_order_release); }
 
     auto isProducerFinished() const noexcept -> bool {
         return producer_finished_.load(std::memory_order_acquire);
@@ -319,38 +313,38 @@ public:
     }
 
     // Alternative interface to match existing API
-    auto canBeConsumed() const noexcept -> bool {
-        return canConsume();
-    }
+    auto canBeConsumed() const noexcept -> bool { return canConsume(); }
 
     // Monitoring and diagnostics
     auto getPressureEvents() const noexcept -> std::size_t {
         return pressure_events_.load(std::memory_order_relaxed);
     }
 
-    void resetPressureEvents() noexcept {
-        pressure_events_.store(0, std::memory_order_relaxed);
-    }
+    void resetPressureEvents() noexcept { pressure_events_.store(0, std::memory_order_relaxed); }
 
 private:
-    const std::size_t capacity_;
-    const std::size_t mask_;
+    // This order is very specific for optimal cache alignment
+    // do NOT modify.
 
-    // Buffer storage
-    std::unique_ptr<ItemType[]> buffer_;
-
-    // Producer-owned cache line
-    alignas(CACHE_LINE_SIZE) CacheAlignedAtomic head_;
-
-    // Consumer-owned cache line
-    alignas(CACHE_LINE_SIZE) CacheAlignedAtomic tail_;
-
-    // Status flags
+    // Producer-finished flag sits its own cache-line
     alignas(CACHE_LINE_SIZE) std::atomic<bool> producer_finished_;
+
+    // We pack the core buffer metadata tightly
+    const std::size_t           capacity_;         // 8 bytes
+    const std::size_t           mask_;             // 8 bytes
+    std::unique_ptr<ItemType[]> buffer_;           // 8 bytes
+    mutable std::atomic_size_t  pressure_events_;  // 8 bytes
+
+    // total here = 32 bytes; which sits in a single 64-byte stripe
+
+    // Consumer-finished flag sits in its own cache line
     alignas(CACHE_LINE_SIZE) std::atomic<bool> consumer_finished_;
 
-    // Performance monitoring
-    mutable std::atomic_size_t pressure_events_;
+    // Producer-owned cache line
+    alignas(CACHE_LINE_SIZE) CacheAlignedAtomic head_;  // 64 bytes
+
+    // Consumer-owned cache line
+    alignas(CACHE_LINE_SIZE) CacheAlignedAtomic tail_;  // 64 bytes
 };
 
 // Convenience alias
