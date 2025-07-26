@@ -333,24 +333,28 @@ public:
     }
 
 private:
-    const std::size_t capacity_;
-    const std::size_t mask_;
+    // This order is very specific for optimal cache alignment
+    // do NOT modify.
 
-    // Buffer storage
-    std::unique_ptr<ItemType[]> buffer_;
+    // Producer-finished flag sits its own cache-line
+    alignas(CACHE_LINE_SIZE) std::atomic<bool> producer_finished_ {false};
+
+    // We pack the core buffer metadata tightly
+    const std::size_t           capacity_;             // 8 bytes
+    const std::size_t           mask_;                 // 8 bytes
+    std::unique_ptr<ItemType[]> buffer_;               // 8 bytes
+    mutable std::atomic_size_t  pressure_events_ {0};  // 8 bytes
+
+    // total here = 32 bytes; which sits in a single 64-byte stripe
+
+    // Consumer-finished flag sits in its own cache line
+    alignas(CACHE_LINE_SIZE) std::atomic<bool> consumer_finished_ {false};
 
     // Producer-owned cache line
-    alignas(CACHE_LINE_SIZE) CacheAlignedAtomic head_;
+    alignas(CACHE_LINE_SIZE) CacheAlignedAtomic head_;  // 64 bytes
 
     // Consumer-owned cache line
-    alignas(CACHE_LINE_SIZE) CacheAlignedAtomic tail_;
-
-    // Status flags
-    alignas(CACHE_LINE_SIZE) std::atomic<bool> producer_finished_;
-    alignas(CACHE_LINE_SIZE) std::atomic<bool> consumer_finished_;
-
-    // Performance monitoring
-    mutable std::atomic_size_t pressure_events_;
+    alignas(CACHE_LINE_SIZE) CacheAlignedAtomic tail_;  // 64 byes
 };
 
 // Convenience alias
