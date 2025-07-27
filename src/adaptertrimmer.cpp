@@ -117,7 +117,6 @@ bool AdapterTrimmer::trimBySequence(Read* r, FilterResult* fr, string& adapterse
     // if failed to exact match, we try one gap
     // to lower computational cost, we only allow one gap, and it's much enough for short reads
     // we try insertion in the sequence
-    bool hasInsertion = false;
     if(!found) {
         for(pos = 0; pos<rlen-matchReq-1; pos++) {
             int cmplen = min(rlen - pos - 1, alen);
@@ -125,7 +124,6 @@ bool AdapterTrimmer::trimBySequence(Read* r, FilterResult* fr, string& adapterse
             bool matched = Matcher::matchWithOneInsertion(rdata, adata, cmplen, allowedMismatch);
             if(matched) {
                 found = true;
-                hasInsertion = true;
                 //cerr << ".";
                 break;
             }
@@ -134,7 +132,6 @@ bool AdapterTrimmer::trimBySequence(Read* r, FilterResult* fr, string& adapterse
 
     // if failed to exact match, and failed to match with one insertion in sequence
     // we then try deletion in the sequence
-    bool hasDeletion = false;
     if(!found) {
         for(pos = 0; pos<rlen-matchReq; pos++) {
             int cmplen = min(rlen - pos, alen - 1);
@@ -142,7 +139,6 @@ bool AdapterTrimmer::trimBySequence(Read* r, FilterResult* fr, string& adapterse
             bool matched = Matcher::matchWithOneInsertion(adata, rdata, cmplen, allowedMismatch);
             if(matched) {
                 found = true;
-                hasDeletion = true;
                 //cerr << "|";
                 break;
             }

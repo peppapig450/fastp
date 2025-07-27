@@ -44,14 +44,12 @@ int Evaluator::computeSeqLen(string filename) {
     FastqReader reader(filename);
 
     long records = 0;
-    bool reachedEOF = false;
 
     // get seqlen
     int seqlen=0;
     while(records < 1000) {
         Read* r = reader.read();
         if(!r) {
-            reachedEOF = true;
             break;
         }
         int rlen = r->length();
@@ -72,12 +70,10 @@ void Evaluator::computeOverRepSeq(string filename, std::unordered_map<string, lo
     const long BASE_LIMIT = 151 * 10000;
     long records = 0;
     long bases = 0;
-    bool reachedEOF = false;
 
     while(bases < BASE_LIMIT) {
         Read* r = reader.read();
         if(!r) {
-            reachedEOF = true;
             break;
         }
         int rlen = r->length();
@@ -372,7 +368,6 @@ string Evaluator::evalAdapterAndReadNum(long& readNum, bool isR2) {
     memset(counts, 0, sizeof(unsigned int)*size);
     for(int i=0; i<records; i++) {
         Read* r = loadedReads[i];
-        const char* data = r->mSeq->c_str();
         int key = -1;
         for(int pos = 20; pos <= r->length()-keylen-shiftTail; pos++) {
             key = seq2int(r->mSeq, pos, keylen, key);
@@ -479,7 +474,6 @@ string Evaluator::getAdapterWithSeed(int seed, Read** loadedReads, long records,
     // forward search
     for(int i=0; i<records; i++) {
         Read* r = loadedReads[i];
-        const char* data = r->mSeq->c_str();
         int key = -1;
         for(int pos = 20; pos <= r->length()-keylen-shiftTail && pos <MAX_SEARCH_LENGTH; pos++) {
             key = seq2int(r->mSeq, pos, keylen, key);
@@ -495,7 +489,6 @@ string Evaluator::getAdapterWithSeed(int seed, Read** loadedReads, long records,
     // backward search
     for(int i=0; i<records; i++) {
         Read* r = loadedReads[i];
-        const char* data = r->mSeq->c_str();
         int key = -1;
         for(int pos = 20; pos <= r->length()-keylen-shiftTail && pos <MAX_SEARCH_LENGTH; pos++) {
             key = seq2int(r->mSeq, pos, keylen, key);
@@ -564,7 +557,6 @@ int Evaluator::seq2int(string* seq, int pos, int keylen, int lastVal) {
 }
 
 int Evaluator::seq2int(string& seq, int pos, int keylen, int lastVal) {
-    int rlen = seq.length();
     if(lastVal >= 0) {
         const int mask = (1 << (keylen*2 )) - 1;
         int key = (lastVal<<2) & mask;

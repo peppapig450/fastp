@@ -494,7 +494,6 @@ bool PairEndProcessor::processPairEnd(ReadPack* leftPack, ReadPack* rightPack, T
         if(config->getThreadId() == 0 && !isizeEvaluated && r1 != NULL && r2!=NULL) {
             OverlapResult ov = OverlapAnalysis::analyze(r1, r2, mOptions->overlapDiffLimit, mOptions->overlapRequire, mOptions->overlapDiffPercentLimit/100.0);
             statInsertSize(r1, r2, ov, frontTrimmed1, frontTrimmed2);
-            isizeEvaluated = true;
         }
 
         if(r1 != NULL && r2!=NULL) {
@@ -517,7 +516,7 @@ bool PairEndProcessor::processPairEnd(ReadPack* leftPack, ReadPack* rightPack, T
                 auto merged = OverlapAnalysis::merge(*r1, *r2, ov);
                 Read* raw_ptr = merged.get();
 
-                int result = mFilter->passFilter(raw_ptr); // TODO: this is temporary do NOT use .get() permanently
+                int result = mFilter->passFilter(raw_ptr);
                 config->addFilterResult(result, 2);
                 if(result == PASS_FILTER) {
                     merged->appendToString(mergedOutput);

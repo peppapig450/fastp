@@ -157,7 +157,6 @@ void Stats::summarize(bool forced) {
         std::vector<double> qualCurve(mCycles);
         std::vector<double> contentCurve(mCycles);
 
-        const auto baseOffset = baseIdx * mBufLen;
         for (int ci = 0; ci < mCycles; ci++) {
             if (mCycleBaseContents(ci, baseIdx) == 0) {
                 qualCurve[ci] = meanQualCurve[ci];
