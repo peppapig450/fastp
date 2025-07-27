@@ -1,3 +1,4 @@
+#include <cassert>
 #include "processor.h"
 #include "peprocessor.h"
 #include "seprocessor.h"
@@ -17,6 +18,7 @@ int Filter::passFilter(Read* r) {
     }
 
     int rlen = r->length();
+    assert(rlen > 0 && "Read length must be greater than zero when calculating average quality");
     int lowQualNum = 0;
     int nBaseNum = 0;
     int totalQual = 0;
@@ -43,7 +45,7 @@ int Filter::passFilter(Read* r) {
     if(mOptions->qualfilter.enabled) {
         if(lowQualNum > (mOptions->qualfilter.unqualifiedPercentLimit * rlen / 100.0) )
             return FAIL_QUALITY;
-        else if(mOptions->qualfilter.avgQualReq > 0 && (totalQual / rlen)<mOptions->qualfilter.avgQualReq)
+        else if(mOptions->qualfilter.avgQualReq > 0 && rlen > 0 && (totalQual / rlen)<mOptions->qualfilter.avgQualReq)
             return FAIL_QUALITY;
         else if(nBaseNum > mOptions->qualfilter.nBaseLimit )
             return FAIL_N_BASE;
