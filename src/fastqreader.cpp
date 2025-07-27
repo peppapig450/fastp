@@ -23,6 +23,7 @@ SOFTWARE.
 */
 
 #include "fastqreader.h"
+#include "read.h"
 #include "util.h"
 #include <string.h>
 #include <cassert>
@@ -392,19 +393,16 @@ bool FastqReader::isZipped(){
 bool FastqReader::test(){
 	FastqReader reader1("testdata/R1.fq");
 	FastqReader reader2("testdata/R1.fq");
-	Read* r1 = NULL;
-	Read* r2 = NULL;
 	int i=0;
 	while(true){
 		i++;
-		r1=reader1.read();
-		r2=reader2.read();
-		if(r1 == NULL || r2==NULL)
+		std::unique_ptr<Read> r1(reader1.read());
+        std::unique_ptr<Read> r2(reader2.read());
+		if(r1 == nullptr || r2 == nullptr) {
 			break;
+		}
 		r1->print();
 		r2->print();
-		delete r1;
-		delete r2;
 	}
 	return true;
 }
@@ -435,16 +433,17 @@ FastqReaderPair::~FastqReaderPair(){
 }
 
 ReadPair* FastqReaderPair::read(){
-	Read* l = mLeft->read();
-	Read* r = NULL;
-	if(mInterleaved)
-		r = mLeft->read();
-	else
-		r = mRight->read();
-	if(!l || !r){
-		return NULL;
+	std::unique_ptr<Read> left(mLeft->read());
+	std::unique_ptr<Read> right;
+	if (mInterleaved) {
+		right.reset(mLeft->read());
 	} else {
-		// TODO: should probably update the function that returns these instead of wrapping here
-		return new ReadPair(std::unique_ptr<Read>(l), std::unique_ptr<Read>(r));
+		right.reset(mRight->read());
 	}
+
+	if (left == nullptr || right == nullptr) {
+		return nullptr;
+	}
+
+	return new ReadPair(std::move(left), std::move(right));
 }
