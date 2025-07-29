@@ -386,14 +386,12 @@ auto OverlapAnalysis::test() -> bool {
         std::string merged_qual;
     };
 
-    auto runTestCase = [&](TestCase const& tcase) -> bool {
-        // build inputs
-        const std::string& s1 = tcase.seq1;
-        const std::string& s2 = tcase.seq2;
-        const std::string& q1 = tcase.qual1;
-        const std::string& q2 = tcase.qual2;
+    auto runTestCase = [&](const TestCase& tcase, size_t index) -> bool {
+        const auto& s1 = tcase.seq1;
+        const auto& s2 = tcase.seq2;
+        const auto& q1 = tcase.qual1;
+        const auto& q2 = tcase.qual2;
 
-        // run analyze
         auto overlapResult = OverlapAnalysis::analyze(s1,
                                                       s2,
                                                       tcase.min_ol,
@@ -401,63 +399,99 @@ auto OverlapAnalysis::test() -> bool {
                                                       tcase.diff_thr,
                                                       tcase.allow_gap);
 
-        bool resultMatchExpectations =
-            overlapResult.overlapped == tcase.overlapped && overlapResult.offset == tcase.offset
-            && overlapResult.overlap_len == tcase.overlap_len && overlapResult.diff == tcase.diff
-            && overlapResult.hasGap == tcase.has_gap;
-
-        // Wrap into Reads and merge
         Read                  r1 {"n1", s1, "+", q1};
         Read                  r2 {"n2", s2, "+", q2};
         std::unique_ptr<Read> merged {OverlapAnalysis::merge(r1, r2, overlapResult)};
 
-        if (tcase.overlapped) {
-            resultMatchExpectations &= merged && *merged->mSeq == tcase.merged_seq
-                                       && *merged->mQuality == tcase.merged_qual;
-        } else {
-            resultMatchExpectations &= (merged == nullptr);
+        bool passed = true;
+
+        if (overlapResult.overlapped != tcase.overlapped) {
+            std::cerr << "[Test " << index << " Failed] overlapped: expected " << tcase.overlapped
+                      << ", got " << overlapResult.overlapped << "\n";
+            passed = false;
         }
-        return resultMatchExpectations;
+        if (overlapResult.offset != tcase.offset) {
+            std::cerr << "[Test " << index << " Failed] offset: expected " << tcase.offset
+                      << ", got " << overlapResult.offset << "\n";
+            passed = false;
+        }
+        if (overlapResult.overlap_len != tcase.overlap_len) {
+            std::cerr << "[Test " << index << " Failed] overlap_len: expected " << tcase.overlap_len
+                      << ", got " << overlapResult.overlap_len << "\n";
+            passed = false;
+        }
+        if (overlapResult.diff != tcase.diff) {
+            std::cerr << "[Test " << index << " Failed] diff: expected " << tcase.diff << ", got "
+                      << overlapResult.diff << "\n";
+            passed = false;
+        }
+        if (overlapResult.hasGap != tcase.has_gap) {
+            std::cerr << "[Test " << index << " Failed] hasGap: expected " << tcase.has_gap
+                      << ", got " << overlapResult.hasGap << "\n";
+            passed = false;
+        }
+
+        if (tcase.overlapped) {
+            if (!merged) {
+                std::cerr << "[Test " << index << " Failed] Expected merged read, got nullptr\n";
+                passed = false;
+            } else {
+                if (*merged->mSeq != tcase.merged_seq) {
+                    std::cerr << "[Test " << index
+                              << " Failed] merged_seq:\nExpected: " << tcase.merged_seq
+                              << "\nActual:   " << *merged->mSeq << "\n";
+                    passed = false;
+                }
+                if (*merged->mQuality != tcase.merged_qual) {
+                    std::cerr << "[Test " << index
+                              << " Failed] merged_qual:\nExpected: " << tcase.merged_qual
+                              << "\nActual:   " << *merged->mQuality << "\n";
+                    passed = false;
+                }
+            }
+        } else {
+            if (merged) {
+                std::cerr << "[Test " << index << " Failed] Expected no merge, but got a Read\n";
+                passed = false;
+            }
+        }
+
+        return passed;
     };
 
     std::array<TestCase, 5> cases {{
-        // perfect rc overlap
-        // clang-format off
         { "ACGTACGT","ACGTACGT", "HHHHHHHH","IIIIIIII",
           0,4,0.1,false,
           true,  0,8,0,false,
           "ACGTACGT","HHHHHHHH"
         },
-        // positive offset
         { "AAAAGGGG","AACCCCTT", "HHHHHHHH","IIIIIIII",
           0,4,0.1,false,
           true,  2,6,0,false,
           "AAAAGGGGTT","HHHHHHHHII"
         },
-        // negative offset
         { "GGGGAAAA","TTTTCCCCAA","JJJJJJJJ","KKKKKKKKKK",
           0,4,0.1,false,
           true, -2,8,0,false,
           "GGGGAAAA","JJJJJJJJ"
         },
-        // gap allowed
         { "ACGTAACGT","ACGTACGT","LLLLLLLLL","MMMMMMMM",
           1,4,0.3,true,
           true,  0,8,0,true,
           "ACGTAACG","LLLLLLLL"
         },
-        // no overlap
         { "AAAA","CCCC","NNNN","OOOO",
           0,3,0.1,false,
           false,0,0,0,false,
           "",""
-        }  // clang-format on
+        }
     }};
 
-    bool passedTests = true;
-    for (auto const& tcase : cases) {
-        passedTests &= runTestCase(tcase);
+    bool allPassed = true;
+    for (size_t i = 0; i < cases.size(); ++i) {
+        bool casePassed = runTestCase(cases[i], i);
+        allPassed &= casePassed;
     }
 
-    return passedTests;
+    return allPassed;
 }

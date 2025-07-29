@@ -189,23 +189,34 @@ bool AdapterTrimmer::test() {
         "TTTTAACCCCCCCCCCCCCCCCCCCCCCCCCCCCAATTTTAAAATTTTCCCCGGGG",
         "+",
         "///EEEEEEEEEEEEEEEEEEEEEEEEEE////EEEEEEEEEEEEE////E////E");
-    string adapter = "TTTTCCACGGGGATACTACTG";
-    bool trimmed = AdapterTrimmer::trimBySequence(&r, NULL, adapter);
-    if (*r.mSeq != "TTTTAACCCCCCCCCCCCCCCCCCCCCCCCCCCCAATTTTAAAA")
+    std::string adapter = "TTTTCCACGGGGATACTACTG";
+    bool trimmed = AdapterTrimmer::trimBySequence(&r, nullptr, adapter);
+
+    const std::string expected1 = "TTTTAACCCCCCCCCCCCCCCCCCCCCCCCCCCCAATTTTAAAA";
+    if (*r.mSeq != expected1) {
+        std::cerr << "[Test 1 Failed]\n"
+                  << "Expected: " << expected1 << "\n"
+                  << "Actual:   " << *r.mSeq << "\n";
         return false;
+    }
 
     Read read("@name",
         "TTTTAACCCCCCCCCCCCCCCCCCCCCCCCCCCCAATTTTAAAATTTTCCCCGGGGAAATTTCCCGGGAAATTTCCCGGGATCGATCGATCGATCGAATTCC",
         "+",
         "///EEEEEEEEEEEEEEEEEEEEEEEEEE////EEEEEEEEEEEEE////E////EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE");
-    vector<string> adapterList;
-    adapterList.push_back("GCTAGCTAGCTAGCTA");
-    adapterList.push_back("AAATTTCCCGGGAAATTTCCCGGG");
-    adapterList.push_back("ATCGATCGATCGATCG");
-    adapterList.push_back("AATTCCGGAATTCCGG");
-    trimmed = AdapterTrimmer::trimByMultiSequences(&read, NULL, adapterList);
-    if (*read.mSeq != "TTTTAACCCCCCCCCCCCCCCCCCCCCCCCCCCCAATTTTAAAATTTTCCCCGGGG") {
-        cerr << read.mSeq << endl;
+    std::vector<std::string> adapterList = {
+        "GCTAGCTAGCTAGCTA",
+        "AAATTTCCCGGGAAATTTCCCGGG",
+        "ATCGATCGATCGATCG",
+        "AATTCCGGAATTCCGG"
+    };
+    trimmed = AdapterTrimmer::trimByMultiSequences(&read, nullptr, adapterList);
+
+    const std::string expected2 = "TTTTAACCCCCCCCCCCCCCCCCCCCCCCCCCCCAATTTTAAAATTTTCCCCGGGG";
+    if (*read.mSeq != expected2) {
+        std::cerr << "[Test 2 Failed]\n"
+                  << "Expected: " << expected2 << "\n"
+                  << "Actual:   " << *read.mSeq << "\n";
         return false;
     }
 
