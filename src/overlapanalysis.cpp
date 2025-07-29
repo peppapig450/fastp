@@ -340,8 +340,7 @@ auto OverlapAnalysis::merge(const Read& read1, const Read& read2, const OverlapR
     const auto len2 = (overlap_offset > 0) ? static_cast<int>(read2.length()) - overlap_len : 0;
 
     // reverse complement read2 for merged tail, then discard
-    auto read2_reverse_compl =
-        std::unique_ptr<Read>(new Read(std::move(read2.reverseComplement())));
+    auto read2_reverse_compl = std::unique_ptr<Read>(new Read(read2.reverseComplement()));
 
     const auto len1_size = static_cast<std::size_t>(len1);
 
@@ -459,6 +458,7 @@ auto OverlapAnalysis::test() -> bool {
         return passed;
     };
 
+    // clang-format off
     std::array<TestCase, 5> cases {{
         { "ACGTACGT","ACGTACGT", "HHHHHHHH","IIIIIIII",
           0,4,0.1,false,
@@ -486,6 +486,7 @@ auto OverlapAnalysis::test() -> bool {
           "",""
         }
     }};
+    // clang-format on
 
     bool allPassed = true;
     for (size_t i = 0; i < cases.size(); ++i) {
