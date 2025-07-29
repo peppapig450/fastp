@@ -1,163 +1,180 @@
 #include "adaptertrimmer.h"
 #include "matcher.h"
+#include "read.h"
 
-AdapterTrimmer::AdapterTrimmer(){
-}
+#include <algorithm>
 
+// Anonymous namespace here allows internal only linkage of these two helpers
+namespace {  // (anon)
 
-AdapterTrimmer::~AdapterTrimmer(){
-}
+// REVIEW: these might be better as std::size_t
+// One mismatch allowed for every eight bases compared
+constexpr int MismatchStride = 8;
 
-bool AdapterTrimmer::trimByOverlapAnalysis(Read* r1, Read* r2, FilterResult* fr, int diffLimit, int overlapRequire, double diffPercentLimit) {
-    OverlapResult ov = OverlapAnalysis::analyze(r1, r2, diffLimit, overlapRequire, diffPercentLimit);
+inline auto allowedMismatch(int length) noexcept -> int { return length / MismatchStride; }
+}  // namespace
+
+// TODO: Taking an overlap analysis object as input is probably better here
+auto AdapterTrimmer::trimByOverlapAnalysis(Read*         r1,
+                                           Read*         r2,
+                                           FilterResult* fr,
+                                           int           diffLimit,
+                                           int           overlapRequire,
+                                           double        diffPercentLimit) -> bool {
+    OverlapResult ov =
+        OverlapAnalysis::analyze(r1, r2, diffLimit, overlapRequire, diffPercentLimit);
+
     return trimByOverlapAnalysis(r1, r2, fr, ov);
 }
 
-bool AdapterTrimmer::trimByOverlapAnalysis(Read* r1, Read* r2, FilterResult* fr, OverlapResult ov, int frontTrimmed1, int frontTrimmed2) {
-    int ol = ov.overlap_len;
-    if(ov.overlapped && ov.offset < 0) {
-        const auto& r1Len = static_cast<int>(r1->length());
-        const auto& r2Len = static_cast<int>(r2->length());
-
-        //5'      ......frontTrimmed1......|------------------------------------------|----- 3'
-        //3' -----|-------------------------------------------|......frontTrimmed2.....      5'
-
-        int len1 = std::min(r1Len, ol + frontTrimmed2);
-        int len2 = std::min(r2Len, ol + frontTrimmed1);
-        std::string adapter1 = r1->seq().substr(len1, r1Len - len1);
-        std::string adapter2 = r2->seq().substr(len2, r2Len - len2);
-
-        if(_DEBUG) {
-            cerr << adapter1 << endl;
-            cerr << adapter2 << endl;
-            cerr << "frontTrimmed2: " << frontTrimmed1 << endl;
-            cerr << "frontTrimmed2: " << frontTrimmed2 << endl;
-            cerr << "overlap:" << ov.offset << "," << ov.overlap_len << ", " << ov.diff << endl;
-            r1->print();
-            r2->reverseComplement().print();
-            cerr <<endl;
-        }
-        r1->resize(len1);
-        r2->resize(len2);
-
-        fr->addAdapterTrimmed(adapter1, adapter2);
-        return true;
+// TODO: look into taking references here instead of pointers
+auto AdapterTrimmer::trimByOverlapAnalysis(Read*         r1,
+                                           Read*         r2,
+                                           FilterResult* fr,
+                                           OverlapResult ov,
+                                           int           frontTrimmed1,
+                                           int           frontTrimmed2) -> bool {
+    if (!ov.overlapped || ov.offset >= 0) {
+        return false;
     }
-    return false;
+
+    // REVIEW: This is a bit redundant a lambda MIGHT be better here for clarity, but since
+    // it is only two variables maybe not.
+    const auto r1Len      = static_cast<int>(r1->length());
+    const auto r2Len      = static_cast<int>(r2->length());
+    const int  overlapLen = ov.overlap_len;
+
+    // 5'      ......frontTrimmed1......|------------------------------------------|----- 3'
+    // 3' -----|-------------------------------------------|......frontTrimmed2.....      5'
+
+    const auto trimLenR1 = std::min(r1Len, overlapLen + frontTrimmed2);
+    const auto trimLenR2 = std::min(r2Len, overlapLen + frontTrimmed1);
+
+    const std::string adapter1 = r1->seq().substr(trimLenR1);
+    const std::string adapter2 = r2->seq().substr(trimLenR2);
+
+#ifdef _DEBUG
+    // clang-format off
+    std::cerr << adapter1   << '\n'
+              << adapter2   << '\n'
+              << "frontTrimmed1 = " << frontTrimmed1 << '\n'
+              << "frontTrimmed2 = " << frontTrimmed2 << '\n'
+              << "overlap = "       << ov.offset     << ", " 
+              << overlapLen << ", " << ov.diff       << '\n';
+    // clang-format on
+    r1->print();
+    r2->reverseComplement().print();
+    std::cerr << '\n';
+#endif  // _DEBUG
+
+    r1->resize(trimLenR1);
+    r2->resize(trimLenR2);
+    fr->addAdapterTrimmed(adapter1, adapter2);
+    return true;
 }
 
-bool AdapterTrimmer::trimByMultiSequences(Read* r, FilterResult* fr, vector<string>& adapterList, bool isR2, bool incTrimmedCounter) {
-    int matchReq = 4;
-    if(adapterList.size() > 16)
-        matchReq = 5;
-    if(adapterList.size() > 256)
-        matchReq = 6;
-    bool trimmed = false;
-
-    string* originalSeq = r->mSeq;
-    for(int i=0; i<adapterList.size(); i++) {
-        trimmed |= trimBySequence(r, NULL, adapterList[i], isR2, matchReq);
+auto AdapterTrimmer::trimByMultiSequences(Read*                     r,
+                                          FilterResult*             fr,
+                                          std::vector<std::string>& adapterList,
+                                          bool                      isR2,
+                                          bool                      incTrimmedCounter) -> bool {
+    if (adapterList.empty()) {
+        return false;
     }
 
-    if(trimmed) {
-        string adapter = originalSeq->substr(r->length(), originalSeq->length() - r->length());
-        if(fr)
+    // TODO: this would probably be better as std::size_t
+    const auto listSize = static_cast<int>(adapterList.size());
+    // clang-format off
+    const int matchReq = listSize > 256 ? 6 :
+                         listSize >  16 ? 5 : 4;
+    // clang-format on
+
+    const auto& originalSeq = r->seq();
+    bool        trimmed     = false;
+
+    for (auto& adapter : adapterList) {
+        trimmed |= trimBySequence(r, nullptr, adapter, isR2, matchReq);
+    }
+
+    if (trimmed) {
+        std::string adapter = originalSeq.substr(r->length());
+        if (fr != nullptr) {
             fr->addAdapterTrimmed(adapter, isR2, incTrimmedCounter);
-        else
-            cerr << adapter << endl;
+        } else {
+            std::cerr << adapter << '\n';
+        }
     }
 
     return trimmed;
 }
 
-bool AdapterTrimmer::trimBySequence(Read* r, FilterResult* fr, string& adapterseq, bool isR2, int matchReq) {
-    const int allowOneMismatchForEach = 8;
-
-    int rlen = r->length();
-    int alen = adapterseq.length();
-
-    const char* adata = adapterseq.c_str();
-    const char* rdata = r->mSeq->c_str();
-
-    if(alen < matchReq)
+// TODO: matchReq is probably better as std::size_t
+auto AdapterTrimmer::trimBySequence(Read*              r,
+                                    FilterResult*      fr,
+                                    const std::string& adapterSeq,
+                                    bool               isR2,
+                                    int                matchReq) -> bool {
+    const auto adapterLength = static_cast<int>(adapterSeq.size());
+    // LATER: figure out what Req means
+    if (adapterLength < matchReq) {
         return false;
+    }
 
-    int pos=0;
+    // NOTE: if matchReq is std::size_t this should be too
+    const auto  readLength  = static_cast<int>(r->length());
+    const char* adapterData = adapterSeq.data();
+    const char* readData    = r->seq().data();
+
+    // we start from negative numbers since the Illumina adapter dimer usually have the first A
+    // skipped as A-tailing
+    int startPos = (adapterLength >= 16)   ? -4
+                   : (adapterLength >= 12) ? -3
+                   : (adapterLength >= 8)  ? -2
+                                           : 0;
+
     bool found = false;
-    int start = 0;
-    if(alen >= 16)
-        start = -4;
-    else if(alen >= 12)
-        start = -3;
-    else if(alen >= 8)
-        start = -2;
-    // we start from negative numbers since the Illumina adapter dimer usually have the first A skipped as A-tailing
-    // try exact match with hamming distance (no insertion of deletion)
-    for(pos = start; pos<rlen-matchReq; pos++) {
-        int cmplen = min(rlen - pos, alen);
-        int allowedMismatch = cmplen/allowOneMismatchForEach;
-        int mismatch = 0;
-        bool matched = true;
-        for(int i=max(0, -pos); i<cmplen; i++) {
-            if( adata[i] != rdata[i+pos] ){
-                mismatch++;
-                if(mismatch > allowedMismatch) {
-                    matched = false;
-                    break;
-                }
-            }
-        }
-        if(matched) {
+    int  pos   = 0;
+    for (pos = startPos; pos < readLength - matchReq && !found; ++pos) {
+        const int readShift    = std::max(0, pos);
+        const int adapterShift = std::max(0, -pos);
+        const int readAvail    = readLength - readShift;
+        const int adapterAvail = adapterLength - adapterShift;
+
+        const char* left  = readData + readShift;
+        const char* right = adapterData + adapterShift;
+
+        // We let the function see at most one extra base to accommodate a single
+        // insertion/deletion
+        const int maxCmpLenA = readAvail;
+        const int maxCmpLenB = adapterAvail;
+        const int cmpLenMin  = std::min(maxCmpLenA, maxCmpLenB);
+
+        const int allowedMismatchCount = allowedMismatch(cmpLenMin);
+
+        const int diff =
+            Matcher::editDistance(left, cmpLenMin, right, cmpLenMin, allowedMismatchCount);
+
+        // if we're aligning the *full* adapter length, only allow a perfect match;
+        // partial (prefix) matches may still have up to allowedMismatchCount mismatches
+        bool fullAdapter = (cmpLenMin == adapterLength);
+        if (diff >= 0 && diff <= allowedMismatchCount && (!fullAdapter || diff == 0)) {
             found = true;
             break;
         }
-
     }
 
-    // if failed to exact match, we try one gap
-    // to lower computational cost, we only allow one gap, and it's much enough for short reads
-    // we try insertion in the sequence
-    if(!found) {
-        for(pos = 0; pos<rlen-matchReq-1; pos++) {
-            int cmplen = min(rlen - pos - 1, alen);
-            int allowedMismatch = cmplen/allowOneMismatchForEach -1;
-            bool matched = Matcher::matchWithOneInsertion(rdata, adata, cmplen, allowedMismatch);
-            if(matched) {
-                found = true;
-                //cerr << ".";
-                break;
-            }
-        }
-    }
-
-    // if failed to exact match, and failed to match with one insertion in sequence
-    // we then try deletion in the sequence
-    if(!found) {
-        for(pos = 0; pos<rlen-matchReq; pos++) {
-            int cmplen = min(rlen - pos, alen - 1);
-            int allowedMismatch = cmplen/allowOneMismatchForEach -1;
-            bool matched = Matcher::matchWithOneInsertion(adata, rdata, cmplen, allowedMismatch);
-            if(matched) {
-                found = true;
-                //cerr << "|";
-                break;
-            }
-        }
-    }
-
-    if(found) {
-        if(pos < 0) {
-            string adapter = adapterseq.substr(0, alen+pos);
-            r->mSeq->resize(0);
-            r->mQuality->resize(0);
-            if(fr) {
+    if (found) {
+        if (pos < 0) {
+            std::string adapter = adapterSeq.substr(0, adapterLength + pos);
+            r->resize(0);
+            if (fr != nullptr) {
                 fr->addAdapterTrimmed(adapter, isR2);
             }
 
         } else {
-            string adapter = r->mSeq->substr(pos, rlen-pos);
+            std::string adapter = r->seq().substr(pos, readLength - pos);
             r->resize(pos);
-            if(fr) {
+            if (fr != nullptr) {
                 fr->addAdapterTrimmed(adapter, isR2);
             }
         }
