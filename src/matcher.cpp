@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include <vector>
 
 // Conditionally enable macros for compiler hints related to branch prediction
 #ifndef LIKELY_BRANCH
@@ -302,42 +303,195 @@ auto Matcher::diffWithOneInsertionImpl(const char   *insertionData,
     return (minimumDifference == std::numeric_limits<int>::max()) ? -1 : minimumDifference;
 }
 
+// TODO: if we decide to use this it needs more readable variable names
+auto Matcher::editDistance(const char *firstString,
+                           int         lenA,
+                           const char *secondString,
+                           int         lenB,
+                           int         maxAllowedEdits) -> int {
+    if (lenA <= 0 || lenB <= 0 || maxAllowedEdits < 0) {
+        return -1;
+    }
+
+    // pure substitution case:  if the two strings have equal length,
+    // just count mismatches using Hamming distance and return that distance
+    // if <= maxAllowedEdits.
+    if (lenA == lenB) {
+        int mismatches = 0;
+        for (int i = 0; i < lenA; ++i) {
+            if (firstString[i] != secondString[i] && ++mismatches > maxAllowedEdits) {
+                break;
+            }
+        }
+
+        if (mismatches <= maxAllowedEdits) {
+            return mismatches;
+        }
+    }
+
+    // Fast path: identical lengths and maxAllowedEdits == 0 -> pure equality test
+    if (maxAllowedEdits == 0) {
+        return std::equal(firstString, firstString + lenA, secondString) ? 0 : -1;
+    }
+
+    /** These are commonly used in LV but we comment them out for now.
+    const int  delta = lenA - lenB;
+    const int maxD = maxAllowedEdits + std::abs(delta);
+    */
+
+    /* V[d] = furthest matched x-coordinate on diagonal d (= x - y).
+       We bias indices by maxAllowedEdits + 1 to keep them non-negative. */
+    std::vector<int> V((2 * maxAllowedEdits) + 3, -1);
+    const int        bias = maxAllowedEdits + 1;
+    V[bias + 1]           = 0;
+
+    for (int e = 0; e <= maxAllowedEdits; ++e) {
+        for (int d = -e; d <= e; d += 2) {
+            const int base = bias + d;
+            const int idxR = base + 1;
+            const int idxL = base - 1;
+
+            int x;
+            if (d == -e || (d != e && V[idxL] < V[idxR])) {
+                // Insertion in firstString (down-move in the edit graph)
+                x = V[idxR];
+            } else {
+                // Deletion from firstString (right-move in the edit graph)
+                x = V[idxL] + 1;
+            }
+            int y = x - d;
+
+            // Greedy match ("snake")
+            while (x < lenA && y < lenB && firstString[x] == secondString[y]) {
+                ++x;
+                ++y;
+            }
+
+            // Write the advanced x-coordinate back so future waves can use it
+            V[base] = x;
+
+            // Reached the end of both strings?
+            if (x >= lenA && y >= lenB) {
+                return e;
+            }
+        }
+    }
+
+    return -1;  // Distance > maxAllowedEdits
+}
+
 bool Matcher::test() {
     const char *normal  = "ACGTAC";
     const char *withIns = "ACGTTAC";  // insert T in the middle
 
     if (!matchWithOneInsertion(withIns, normal, 6, 1)) {
-        std::cerr << "matchWithOneInsertion failed for insertion case" << std::endl;
+        std::cerr << "matchWithOneInsertion failed for insertion case" << '\n';
         return false;
     }
     int diff = diffWithOneInsertion(withIns, normal, 6, 1);
     if (diff != 0) {
         std::cerr << "diffWithOneInsertion expected 0 but got " << diff << " for insertion case"
-                  << std::endl;
+                  << '\n';
         return false;
     }
 
     const char *withMismatch = "ACGTTAG";  // one mismatch after insertion
     if (!matchWithOneInsertion(withMismatch, normal, 6, 1)) {
-        std::cerr << "matchWithOneInsertion failed for mismatch case" << std::endl;
+        std::cerr << "matchWithOneInsertion failed for mismatch case" << '\n';
         return false;
     }
     diff = diffWithOneInsertion(withMismatch, normal, 6, 2);
     if (diff != 1) {
         std::cerr << "diffWithOneInsertion expected 1 but got " << diff << " for mismatch case"
-                  << std::endl;
+                  << '\n';
         return false;
     }
 
     // should fail when mismatch exceeds allowed limit
     if (matchWithOneInsertion(withMismatch, normal, 6, 0)) {
-        std::cerr << "matchWithOneInsertion unexpectedly succeeded when diffLimit=0" << std::endl;
+        std::cerr << "matchWithOneInsertion unexpectedly succeeded when diffLimit=0" << '\n';
         return false;
     }
     diff = diffWithOneInsertion(withMismatch, normal, 6, 0);
     if (diff != -1) {
         std::cerr << "diffWithOneInsertion expected -1 but got " << diff << " when diffLimit=0"
-                  << std::endl;
+                  << '\n';
+        return false;
+    }
+
+    const char *first  = "ACGTAC";
+    const char *second = "ACGTAC";
+    const int   len    = 6;
+
+    // 1) Invalid parameters
+    if (Matcher::editDistance(first, 0, second, 1, 1) != -1) {
+        std::cerr << "editDistance(0-length input) should return -1\n";
+        return false;
+    }
+    if (Matcher::editDistance(first, len, second, len, -1) != -1) {
+        std::cerr << "editDistance(negative maxAllowedEdits) should return -1\n";
+        return false;
+    }
+
+    // 2) Exact match
+    if (Matcher::editDistance(first, len, second, len, 0) != 0) {
+        std::cerr << "Expected 0 for exact match but got "
+                  << Matcher::editDistance(first, len, second, len, 0) << "\n";
+        return false;
+    }
+
+    // 3) Substitutions
+    if (Matcher::editDistance("TCGTAC", len, second, len, 1) != 1) {
+        std::cerr << "Expected 1 for substitution at start but got "
+                  << Matcher::editDistance("TCGTAC", len, second, len, 1) << "\n";
+        return false;
+    }
+    if (Matcher::editDistance("ACGTAT", len, second, len, 1) != 1) {
+        std::cerr << "Expected 1 for substitution at end but got "
+                  << Matcher::editDistance("ACGTAT", len, second, len, 1) << "\n";
+        return false;
+    }
+    if (Matcher::editDistance("TCGTAT", len, second, len, 1) != -1) {
+        std::cerr << "Expected -1 for two substitutions but got "
+                  << Matcher::editDistance("TCGTAT", len, second, len, 1) << "\n";
+        return false;
+    }
+
+    // 4) Insertions
+    if (Matcher::editDistance("XACGTAC", 7, second, len, 1) != 1) {
+        std::cerr << "Expected 1 for insertion at front but got "
+                  << Matcher::editDistance("XACGTAC", 7, second, len, 1) << "\n";
+        return false;
+    }
+    if (Matcher::editDistance(second, len, "ACGTACY", 7, 1) != 1) {
+        std::cerr << "Expected 1 for insertion at end but got "
+                  << Matcher::editDistance(second, len, "ACGTACY", 7, 1) << "\n";
+        return false;
+    }
+
+    // 5) Deletions
+    if (Matcher::editDistance("CGTAC", 5, second, len, 1) != 1) {
+        std::cerr << "Expected 1 for deletion at front but got "
+                  << Matcher::editDistance("CGTAC", 5, second, len, 1) << "\n";
+        return false;
+    }
+    if (Matcher::editDistance("ACGTA", 5, second, len, 1) != 1) {
+        std::cerr << "Expected 1 for deletion at end but got "
+                  << Matcher::editDistance("ACGTA", 5, second, len, 1) << "\n";
+        return false;
+    }
+
+    // len) Combined insertion + mismatch
+    if (Matcher::editDistance("XCGTAT", len, second, len, 2) != 2) {
+        std::cerr << "Expected 2 for one insertion and one substitution but got "
+                  << Matcher::editDistance("XCGTAT", len, second, len, 2) << "\n";
+        return false;
+    }
+
+    // 7) Insertion in middle
+    if (Matcher::editDistance("ACGXTAC", 7, second, len, 1) != 1) {
+        std::cerr << "Expected 1 for insertion in middle but got "
+                  << Matcher::editDistance("ACGXTAC", 7, second, len, 1) << "\n";
         return false;
     }
 
