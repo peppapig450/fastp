@@ -141,7 +141,7 @@ auto Read::reverseComplement() const noexcept -> Read {
     Sequence    reverseCompl = reverseComplSeq.reverseComplement();
     std::string reverseQual(mQuality_.rbegin(), mQuality_.rend());
 
-    return Read(mName_, reverseCompl.str(), mStrand_, std::move(reverseQual));
+    return {mName_, reverseCompl.str(), mStrand_, std::move(reverseQual)};
 }
 
 auto Read::fixMGI() -> bool {
