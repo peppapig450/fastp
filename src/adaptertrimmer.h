@@ -1,27 +1,39 @@
-#ifndef ADAPTER_TRIMMER_H
-#define ADAPTER_TRIMMER_H
+#pragma once
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <string>
-#include "overlapanalysis.h"
+
 #include "filterresult.h"
-#include "options.h"
+#include "overlapanalysis.h"
 
-using namespace std;
+class Read;  // Forward declaration
 
-class AdapterTrimmer{
+// NOTE: This can probably be a namespace, or can use members for reduced boilerplate
+class AdapterTrimmer {
 public:
-    AdapterTrimmer();
-    ~AdapterTrimmer();
+    AdapterTrimmer()  = default;
+    ~AdapterTrimmer() = default;
 
-    static bool trimByOverlapAnalysis(Read* r1, Read* r2, FilterResult* fr, int diffLimit, int overlapRequire, double diffPercentLimit);
-    static bool trimByOverlapAnalysis(Read* r1, Read* r2, FilterResult* fr, OverlapResult ov, int frontTrimmed1 = 0, int frontTrimmed2 = 0);
-    static bool trimBySequence(Read* r1, FilterResult* fr, string& adapter, bool isR2 = false, int matchReq = 4);
-    static bool trimByMultiSequences(Read* r1, FilterResult* fr, vector<string>& adapterList, bool isR2 = false, bool incTrimmedCounter = true);
-    static bool test();
-
+    static auto trimByOverlapAnalysis(Read*         r1,
+                                      Read*         r2,
+                                      FilterResult* fr,
+                                      int           diffLimit,
+                                      int           overlapRequire,
+                                      double        diffPercentLimit) -> bool;
+    static auto trimByOverlapAnalysis(Read*         r1,
+                                      Read*         r2,
+                                      FilterResult* fr,
+                                      OverlapResult ov,
+                                      int           frontTrimmed1 = 0,
+                                      int           frontTrimmed2 = 0) -> bool;
+    static auto trimBySequence(Read*              r,
+                               FilterResult*      fr,
+                               const std::string& adapterSeq,
+                               bool               isR2     = false,
+                               int                matchReq = 4) -> bool;
+    static auto trimByMultiSequences(Read*                     r1,
+                                     FilterResult*             fr,
+                                     std::vector<std::string>& adapterList,
+                                     bool                      isR2              = false,
+                                     bool                      incTrimmedCounter = true) -> bool;
+    static auto test() -> bool;
 };
-
-
-#endif
