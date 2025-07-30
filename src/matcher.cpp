@@ -220,6 +220,7 @@ auto Matcher::exactMatch(const char *text,
     return false;
 }
 
+// TODO: This does NOT pass the tests in adapterTrimmer
 auto Matcher::locateAdapter(const char *read,
                             int         readLen,
                             const char *adapter,
