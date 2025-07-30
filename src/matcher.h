@@ -16,6 +16,32 @@ class Matcher {
     Matcher() = default;
     ~Matcher() = default;
 
+    /*
+     * Fast approximate adapter search.
+     *
+     *  - Uses the Myers' 1999 bit-parallel algorithm when the pattern
+     *     (adapter suffix under inspection) is <= 64bp
+     *  - Falls back to a banded Landau-Vishkin search otherwise.
+     *  - Accepts substitutions plus <= 1 indel.
+     *
+     * @param read             Pointer to read sequence.
+     * @param readLen          Length of read.
+     * @param adapter          Pointer to *full* adapter sequence.
+     * @param adapterLen       Length of adapter.
+     * @param mismatchStride   Denominator used by AdapterTrimmer (usually 8)
+     * @param matchReq         Minimal required overlap (4-6bp, depends on #adapters).
+     * @param[out] hitPos      Offset where the adapter starts relative to the read
+     *                         (can be negative when the read begins inside the adapter).
+     * @return true if a valid alignment was found.
+     */
+    static auto locateAdapter(const char *read,
+                              int         readLen,
+                              const char *adapter,
+                              int         adapterLen,
+                              int         mismatchStride,
+                              int         matchReq,
+                              int        &hitPos) -> bool;
+
     // Delete the copy constructor and assignment operator as they're unneeded
     Matcher(const Matcher &) = delete;
     auto operator=(const Matcher &) -> Matcher & = delete;
@@ -74,6 +100,27 @@ class Matcher {
 
         return func(leftMismatches.data(), rightMismatches.data());
     }
+
+    // helpers for the hybrid search
+    static auto exactMatch(const char *text,
+                           int         textLen,
+                           const char *pattern,
+                           int         patLen,
+                           int        &posOut) noexcept -> bool;
+
+    static auto bitapSearch64(const char *text,
+                              int         textLen,
+                              const char *pattern,
+                              int         patLen,
+                              int         diffLimit,
+                              int        &posOut) -> bool;
+
+    static auto landauVishkinSearch(const char *text,
+                                    int         textLen,
+                                    const char *pattern,
+                                    int         patLen,
+                                    int         diffLimit,
+                                    int        &posOut) -> bool;
 
     // Internal implementations that operate on preallocated mismatch buffers.
     // Called by the public methods via allocateAndExecute to abstract memory handling.

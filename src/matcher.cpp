@@ -1,6 +1,10 @@
 #include "matcher.h"
 
 #include <algorithm>
+#include <array>
+#include <cassert>
+#include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <limits>
 
@@ -62,6 +66,194 @@
 #else
     #define RESTRICT
 #endif
+
+namespace {  // (anon)
+
+constexpr std::size_t MyersLimit  = 64;  // Upper size limit for Myers' algorithm
+constexpr std::size_t EqTableSize = 256;
+using EqTable                     = std::array<uint64_t, EqTableSize>;
+
+// TODO: since c++11 has no constexpr functions, generating this with a python script or something
+// and then pasting might be better, as it avoids runtime cost.
+/*
+ * Builds a 256-entry equality (Eq) table for Myers' bit-parallel algorithm.
+ * Supports patterns up to 64 bases in length.
+ *
+ * @param  pattern    The input pattern string.
+ * @param  length     The length of the pattern. (must be <= 64)
+ * @param  eqTable    Output: Eq table mapping each byte value to a bitmask.
+ */
+void buildEqTable(const char *pattern, int length, EqTable &eqTable) {
+    assert(length >= 0 && length <= MyersLimit);  // Bounds check for Myers' algorithm
+
+    std::fill_n(eqTable.begin(), EqTableSize, 0ULL);
+
+    for (std::size_t position = 0; position < static_cast<std::size_t>(length); ++position) {
+        const auto character = static_cast<unsigned char>(pattern[position]);
+        eqTable[character] |= (1ULL << position);
+    }
+}
+
+}  // namespace
+
+auto Matcher::bitapSearch64(const char *text,
+                            int         textLen,
+                            const char *pattern,
+                            int         patLen,
+                            int         diffLimit,
+                            int        &posOut) -> bool {
+    if (patLen == 0 || patLen > MyersLimit) {
+        return false;
+    }
+
+    EqTable Eq;
+    buildEqTable(pattern, patLen, Eq);
+
+    uint64_t       VP    = ~0ULL;  // take the bitwise NOT of 0
+    uint64_t       VN    = 0ULL;
+    int            score = patLen;
+    const uint64_t MSB   = 1ULL << (patLen - 1);  // highest bit of pattern
+
+    for (std::size_t i = 0; i < static_cast<std::size_t>(textLen); ++i) {
+        uint64_t PM = Eq[static_cast<unsigned char>(text[i])];
+
+        // Myers bit-vector step (edit distance)
+        uint64_t X  = PM | VN;
+        uint64_t D0 = (((PM & VP) + VP) ^ VP) | PM;
+        uint64_t HP = VN | ~(D0 | VP);
+        uint64_t HN = VN & D0;
+
+        if (HP & MSB) {
+            ++score;
+        } else if (HN & MSB) {
+            --score;
+        }
+
+        uint64_t shiftedHP = (HP << 1) | 1ULL;
+        VP                 = (HN << 1) | ~(D0 | shiftedHP);
+        VN                 = D0 & shiftedHP;
+
+        if (score <= diffLimit) {
+            posOut = static_cast<int>(i) - patLen + 1;  // starting index in text
+            return true;
+        }
+    }
+
+    return false;
+}
+
+auto Matcher::landauVishkinSearch(const char *text,
+                                  int         textLen,
+                                  const char *pattern,
+                                  int         patLen,
+                                  int         diffLimit,
+                                  int        &posOut) -> bool {
+    if (patLen == 0) {
+        return false;
+    }
+
+    // Banded LV for each text positiion
+    const int        k = diffLimit;
+    std::vector<int> V((2 * k) + 1, -1);
+
+    // slide coarse window
+    for (int i = 0; i <= textLen - patLen + k; ++i) {
+        std::fill(V.begin(), V.end(), -1);
+        V[k + 0] = 0;  // diagonal 0
+
+        for (int e = 0; e <= k; ++e) {
+            for (int d = -e; d <= e; d += 2) {
+                int idx = k + d;
+                int x;
+
+                const int insertionCandidate = V[idx + 1];
+                const int deletionCandidate  = V[idx - 1];
+                if (d == -e || (d != e && deletionCandidate < insertionCandidate)) {
+                    x = insertionCandidate;  // insertion
+                } else {
+                    x = deletionCandidate + 1;  // deletion
+                }
+
+                int y = x - d;
+
+                // extend match on this diagonal
+                while (x < patLen && y < patLen && pattern[x] == text[i + y]) {
+                    ++x;
+                    ++y;
+                }
+                V[idx] = x;
+
+                // full pattern matched
+                if (x >= patLen) {
+                    posOut = i;
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+auto Matcher::exactMatch(const char *text,
+                         int         textLen,
+                         const char *pattern,
+                         int         patLen,
+                         int        &posOut) noexcept -> bool {
+    // nothing to do if the pattern is longer than the text
+    if (patLen == 0 || patLen > textLen) {
+        return false;
+    }
+
+    const int limit = textLen - patLen;
+    for (int i = 0; i <= limit; ++i) {
+        if (std::memcmp(text + i, pattern, patLen) == 0) {
+            posOut = i;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+auto Matcher::locateAdapter(const char *read,
+                            int         readLen,
+                            const char *adapter,
+                            int         adapterLen,
+                            int         mismatchStride,
+                            int         matchReq,
+                            int        &hitPos) -> bool {
+    const int maxPrefixSkip = (adapterLen >= 16)   ? 4
+                              : (adapterLen >= 12) ? 3
+                              : (adapterLen >= 8)  ? 2
+                                                   : 0;
+
+    for (int offset = 0; offset <= maxPrefixSkip; ++offset) {
+        int patLen = adapterLen - offset;
+        if (patLen < matchReq) {
+            break;
+        }
+
+        const char *patPtr = adapter + offset;
+        int diffLimit = patLen / mismatchStride;
+        int         localPos;
+        bool        adapterFound;
+
+        // if no mismatches allowed, do a straight exact match
+        if (diffLimit == 0) {
+            adapterFound = exactMatch(read, readLen, patPtr, patLen, localPos);
+        } else if (patLen <= MyersLimit) {
+            adapterFound = bitapSearch64(read, readLen, patPtr, patLen, diffLimit, localPos);
+        } else {
+            adapterFound = landauVishkinSearch(read, readLen, patPtr, patLen, diffLimit, localPos);
+        }
+
+        if (adapterFound) {
+            hitPos = localPos - offset;  // convert back to full-adapter origin
+            return true;
+        }
+    }
+    return false;
+}
 
 // Call the internal implementation using a lambda function.
 //
