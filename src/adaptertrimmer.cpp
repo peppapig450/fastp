@@ -125,78 +125,8 @@ auto AdapterTrimmer::trimBySequence(Read*              r,
     const char* adapterData = adapterSeq.data();
     const char* readData    = readSeq.data();
 
-    auto exactMatch = [&](int& posOut) -> bool {
-        // we start from negative numbers since the Illumina adapter dimer usually have the first A
-        // skipped as A-tailing
-        const int startPos = (adapterLen >= 16)   ? -4
-                             : (adapterLen >= 12) ? -3
-                             : (adapterLen >= 8)  ? -2
-                                                  : 0;
-        for (int pos = startPos; pos < readLen - matchReq; ++pos) {
-            const int compLen = std::min(readLen - pos, adapterLen);
-            if (compLen < matchReq) {
-                return true;
-            }
-
-            // Attempt perfect match via memcmp
-            if (std::memcmp(adapterData, readData + pos, compLen) == 0) {
-                posOut = pos;
-                return true;
-            }
-
-            // Fallback to checking within the Hamming distance is within the maximum allowed amount
-            // of mismatches
-            const auto maxMismatch = allowedMismatch(compLen);
-            if (maxMismatch > 0) {
-                int mismatches = 0;
-                for (int i = std::max(0, -pos); i < compLen && mismatches <= maxMismatch; ++i) {
-                    mismatches += (adapterData[i] != readData[i + pos]);
-                }
-
-                if (mismatches <= maxMismatch) {
-                    posOut = pos;
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    };
-
-    // If the exact match fails, we try one gap.
-    // To reduce computational cost, we only allow one gap, which is enough for short reads.
-    // We try insertion in the sequence.
-    auto oneInsertion = [&](int& posOut) -> bool {
-        for (int pos = 0; pos < readLen - matchReq - 1; ++pos) {
-            const int compLen     = std::min(readLen - pos - 1, adapterLen);
-            const int maxMismatch = allowedMismatch(compLen) - 1;
-            if (Matcher::matchWithOneInsertion(readData + pos, adapterData, compLen, maxMismatch)) {
-                posOut = pos;
-                return true;
-            }
-        }
-
-        return false;
-    };
-
-    // Final fallback to matching with one deletion in the sequence
-    auto oneDeletion = [&](int& posOut) -> bool {
-        for (int pos = 0; pos < readLen - matchReq; ++pos) {
-            const int compLen     = std::min(readLen - pos, adapterLen - 1);
-            const int maxMismatch = allowedMismatch(compLen) - 1;
-            if (Matcher::matchWithOneInsertion(adapterData, readData + pos, compLen, maxMismatch)) {
-                posOut = pos;
-                return true;
-            }
-        }
-
-        return false;
-    };
-
-    int  pos   = 0;
-    bool found = exactMatch(pos) || oneInsertion(pos) || oneDeletion(pos);
-
-    if (!found) {
+    int pos = 0;  // this is filled by locateAdapter
+    if (!Matcher::locateAdapter(readData, readLen, adapterData, adapterLen, MismatchStride, matchReq, pos)) {
         return false;
     }
 
