@@ -179,7 +179,7 @@ bool AdapterTrimmer::test() {
     if (read.seq() != expected2) {
         std::cerr << "[Test 2 Failed]\n"
                   << "Expected: " << expected2 << "\n"
-                  << "Actual:   " << r.seq() << "\n";
+                  << "Actual:   " << read.seq() << "\n";
         return false;
     }
 

@@ -7,6 +7,7 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <vector>
 
 // Conditionally enable macros for compiler hints related to branch prediction
 #ifndef LIKELY_BRANCH
@@ -67,6 +68,8 @@
     #define RESTRICT
 #endif
 
+static_assert(std::numeric_limits<uint64_t>::digits == 64, "This code requires 64-bit uint64_t.");
+
 namespace {  // (anon)
 
 constexpr std::size_t MyersLimit  = 64;  // Upper size limit for Myers' algorithm
@@ -84,14 +87,16 @@ using EqTable                     = std::array<uint64_t, EqTableSize>;
  * @param  eqTable    Output: Eq table mapping each byte value to a bitmask.
  */
 void buildEqTable(const char *pattern, int length, EqTable &eqTable) {
-    assert(length >= 0 && length <= MyersLimit);  // Bounds check for Myers' algorithm
+  assert(length >= 0 &&
+         length <= MyersLimit); // Bounds check for Myers' algorithm
 
-    std::fill_n(eqTable.begin(), EqTableSize, 0ULL);
+  std::fill(eqTable.begin(), eqTable.end(), 0ULL);
 
-    for (std::size_t position = 0; position < static_cast<std::size_t>(length); ++position) {
-        const auto character = static_cast<unsigned char>(pattern[position]);
-        eqTable[character] |= (1ULL << position);
-    }
+  for (std::size_t position = 0; position < static_cast<std::size_t>(length);
+       ++position) {
+    const auto character = static_cast<unsigned char>(pattern[position]);
+    eqTable[character] |= (1ULL << position);
+  }
 }
 
 }  // namespace
