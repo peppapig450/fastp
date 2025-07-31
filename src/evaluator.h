@@ -1,36 +1,31 @@
-#ifndef EVALUATOR_H
-#define EVALUATOR_H
+#pragma once
 
+#include <memory>
 #include <string>
 #include "options.h"
 #include "read.h" 
 #include <unordered_map>
-
-using namespace std;
+#include <vector>
 
 class Evaluator{
 public:
-    Evaluator(Options* opt);
+    explicit Evaluator(Options* opt);
     ~Evaluator();
     // evaluate how many reads are stored in the input file
     void evaluateReadNum(long& readNum);
-    string evalAdapterAndReadNum(long& readNum, bool isR2);
+    std::string evalAdapterAndReadNum(long& readNum, bool isR2);
     bool isTwoColorSystem();
     void evaluateSeqLen();
     void evaluateOverRepSeqs();
-    void computeOverRepSeq(string filename, std::unordered_map<string, long>& hotseqs, int seqLen);
-    int computeSeqLen(string filename);
+    void computeOverRepSeq(std::string filename, std::unordered_map<std::string, long>& hotseqs, int seqLen);
+    int computeSeqLen(std::string filename);
 
     static bool test();
-    static string matchKnownAdapter(string seq);
+    static std::string matchKnownAdapter(std::string seq);
 private:
     Options* mOptions;
-    string int2seq(unsigned int val, int seqlen);
-    int seq2int(string* seq, int pos, int seqlen, int lastVal = -1);
-    int seq2int(string& seq, int pos, int seqlen, int lastVal = -1);
-    string getAdapterWithSeed(int seed, Read** loadedReads, long records, int keylen);
-    string checkKnownAdapters(Read** reads, long num);
+    std::string int2seq(unsigned int val, int seqlen);
+    int seq2int(const std::string& seq, int pos, int keylen, int lastVal = -1);
+    std::string getAdapterWithSeed(int seed, const std::vector<std::unique_ptr<Read>>& loadedReads, int keylen);
+    std::string checkKnownAdapters(const std::vector<std::unique_ptr<Read>>& reads);
 };
-
-
-#endif

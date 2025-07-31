@@ -1,9 +1,11 @@
 #include "evaluator.h"
 #include "fastqreader.h"
 #include <algorithm>
-#include <cstring>
 #include <map>
+#include <memory>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 #include <memory.h>
 #include "nucleotidetree.h"
 #include "knownadapters.h"
@@ -56,7 +58,7 @@ void Evaluator::evaluateSeqLen() {
         mOptions->seqLen2 = computeSeqLen(mOptions->in2);
 }
 
-int Evaluator::computeSeqLen(string filename) {
+int Evaluator::computeSeqLen(std::string filename) {
     FastqReader reader(filename);
 
     long records = 0;
@@ -69,16 +71,15 @@ int Evaluator::computeSeqLen(string filename) {
             break;
         }
         int rlen = r->length();
-        if(rlen > seqlen)
-            seqlen = rlen;
-        records ++;
+        seqlen = std::max(rlen, seqlen);
+        records++;
         delete r;
     }
 
     return seqlen;
 }
 
-void Evaluator::computeOverRepSeq(string filename, std::unordered_map<string, long>& hotseqs, int seqlen) {
+void Evaluator::computeOverRepSeq(std::string filename, std::unordered_map<string, long>& hotseqs, int seqlen) {
     FastqReader reader(filename);
 
     std::unordered_map<string, long> seqCounts;
@@ -102,7 +103,7 @@ void Evaluator::computeOverRepSeq(string filename, std::unordered_map<string, lo
         for(int s=0; s<5; s++) {
             int step = steps[s];
             for(int i=0; i<rlen-step; i++) {
-                string seq = r->seq().substr(i, step);
+                std::string seq = r->seq().substr(i, step);
                 if(seqCounts.count(seq)>0)
                     seqCounts[seq]++;
                 else
@@ -113,9 +114,9 @@ void Evaluator::computeOverRepSeq(string filename, std::unordered_map<string, lo
         delete r;
     }
     
-    std::unordered_map<string, long>::iterator iter;
+    std::unordered_map<std::string, long>::iterator iter;
     for(iter = seqCounts.begin(); iter!=seqCounts.end(); iter++) {
-        string seq = iter->first;
+        std::string seq = iter->first;
         long count = iter->second;
 
         if(seq.length() >= seqlen-1) {
@@ -142,16 +143,16 @@ void Evaluator::computeOverRepSeq(string filename, std::unordered_map<string, lo
     }
 
     // remove substrings
-    std::unordered_map<string, long>::iterator iter2;
+    std::unordered_map<std::string, long>::iterator iter2;
     iter = hotseqs.begin(); 
     while(iter!=hotseqs.end()) {
-        string seq = iter->first;
+        std::string seq = iter->first;
         long count = iter->second;
         bool isSubString = false;
         for(iter2 = hotseqs.begin(); iter2!=hotseqs.end(); iter2++) {
-            string seq2 = iter2->first;
+            std::string seq2 = iter2->first;
             long count2 = iter2->second;
-            if(seq != seq2 && seq2.find(seq) != string::npos && count / count2 < 10) {
+            if(seq != seq2 && seq2.find(seq) != std::string::npos && count / count2 < 10) {
                 isSubString = true;
                 break;
             }
@@ -183,10 +184,10 @@ void Evaluator::evaluateReadNum(long& readNum) {
     const long BASE_LIMIT = 151 * 512*1024;
     long records = 0;
     long bases = 0;
-    size_t firstReadPos = 0;
+    std::size_t firstReadPos = 0;
 
-    size_t bytesRead;
-    size_t bytesTotal;
+    std::size_t bytesRead;
+    std::size_t bytesTotal;
 
     bool reachedEOF = false;
     bool first = true;
@@ -218,11 +219,12 @@ void Evaluator::evaluateReadNum(long& readNum) {
     }
 }
 
-string Evaluator::checkKnownAdapters(Read** reads, long num) {
-    map<string, string> knownAdapters = getKnownAdapter();
-    map<string, int> possibleCounts;
-    map<string, int> mismatches;
+std::string Evaluator::checkKnownAdapters(const std::vector<std::unique_ptr<Read>>& reads) {
+    std::map<std::string, std::string> knownAdapters = getKnownAdapter();
+    std::map<std::string, int> possibleCounts;
+    std::map<std::string, int> mismatches;
 
+    // TODO: These should probably be constexpr
     // for performance, up to 100k reads and 100M bases
     const int MAX_CHECK_READS = 100000;
     const int MAX_CHECK_BASES = MAX_CHECK_READS*1000;
@@ -232,10 +234,10 @@ string Evaluator::checkKnownAdapters(Read** reads, long num) {
     const int matchReq = 8;
     const int allowOneMismatchForEach = 16;
 
-    map<string, string>::iterator iter;
+    std::map<std::string, std::string>::iterator iter;
 
     for(iter = knownAdapters.begin(); iter!= knownAdapters.end(); iter++) {
-        string adapter = iter->first;
+        std::string adapter = iter->first;
         possibleCounts[adapter] = 0;
         mismatches[adapter] = 0;
     }
@@ -243,29 +245,32 @@ string Evaluator::checkKnownAdapters(Read** reads, long num) {
     long checkedReads = 0;
     long checkedBases = 0;
     int curMaxCount = 0;
-    for (long i=0; i<num; i++) {
-        Read* r = reads[i];
-        const char* rdata = r->mSeq->c_str();
+    for (const auto& r : reads) {
+        const char* rdata = r->seq().data();
         int rlen = r->length();
 
-        checkedReads++;
-        checkedBases+= rlen;
-        if(checkedReads > MAX_CHECK_READS || checkedBases > MAX_CHECK_BASES)
+        ++checkedReads;
+        checkedBases += rlen;
+        if (checkedReads > MAX_CHECK_READS || checkedBases > MAX_CHECK_BASES || curMaxCount > MAX_HIT) {
             break;
-        if(curMaxCount > MAX_HIT)
-            break;
+        }
+
         for(iter = knownAdapters.begin(); iter!= knownAdapters.end(); iter++) {
-            string adapter = iter->first;
+            std::string adapter = iter->first;
             const char* adata = adapter.c_str();
             int alen = adapter.length();
-            if(alen >= rlen)
+
+            if(alen >= rlen) {
                 continue;
+            }
             // this one is not the candidate, skip it for speedup
             if(curMaxCount > 20 && possibleCounts[adapter] <curMaxCount/10) {
-                continue; 
+
+                continue;
             }
+
             for(int pos = 0; pos<rlen-matchReq; pos++) {
-                int cmplen = min(rlen - pos, alen);
+                int cmplen = std::min(rlen - pos, alen);
                 int allowedMismatch = cmplen/allowOneMismatchForEach;
                 int mismatch = 0;
                 bool matched = true;
@@ -280,8 +285,7 @@ string Evaluator::checkKnownAdapters(Read** reads, long num) {
                 }
                 if(matched) {
                     possibleCounts[adapter]++;
-                    if(curMaxCount < possibleCounts[adapter])
-                        curMaxCount = possibleCounts[adapter];
+                    curMaxCount = std::max(curMaxCount, possibleCounts[adapter]);
                     mismatches[adapter] += mismatch;
                     break;
                 }
@@ -289,9 +293,9 @@ string Evaluator::checkKnownAdapters(Read** reads, long num) {
         }
     }
 
-    string adapter = "";
+    std::string adapter;
     int maxCount = 0;
-    map<string, int>::iterator iter2;
+    std::map<std::string, int>::iterator iter2;
     for(iter2 = possibleCounts.begin(); iter2 != possibleCounts.end(); iter2++) {
         if(iter2->second > maxCount) {
             adapter = iter2->first;
@@ -306,8 +310,8 @@ string Evaluator::checkKnownAdapters(Read** reads, long num) {
     return "";
 }
 
-string Evaluator::evalAdapterAndReadNum(long& readNum, bool isR2) {
-    string filename = mOptions->in1;
+std::string Evaluator::evalAdapterAndReadNum(long& readNum, bool isR2) {
+    std::string filename = mOptions->in1;
     if(isR2)
         filename = mOptions->in2;
     FastqReader reader(filename);
@@ -316,18 +320,18 @@ string Evaluator::evalAdapterAndReadNum(long& readNum, bool isR2) {
     const long BASE_LIMIT = 151 * READ_LIMIT;
     long records = 0;
     long bases = 0;
-    size_t firstReadPos = 0;
+    std::size_t firstReadPos = 0;
 
-    size_t bytesRead;
-    size_t bytesTotal;
+    std::size_t bytesRead;
+    std::size_t bytesTotal;
 
-    Read** loadedReads = new Read*[READ_LIMIT];
-    memset(loadedReads, 0, sizeof(Read*)*READ_LIMIT);
+    std::vector<std::unique_ptr<Read>> loadedReads;
+    loadedReads.reserve(READ_LIMIT);
     bool reachedEOF = false;
     bool first = true;
 
     while(records < READ_LIMIT && bases < BASE_LIMIT) {
-        Read* r = reader.read();
+        std::unique_ptr<Read> r{reader.read()}; // TODO: make reader return unique_ptr directly
         if(!r) {
             reachedEOF = true;
             break;
@@ -339,9 +343,10 @@ string Evaluator::evalAdapterAndReadNum(long& readNum, bool isR2) {
         }
         int rlen = r->length();
         bases += rlen;
-        loadedReads[records] = r;
+        loadedReads.emplace_back(std::move(r));
         records++;
     }
+    loadedReads.shrink_to_fit();
 
     readNum = 0;
     if(reachedEOF){
@@ -356,37 +361,28 @@ string Evaluator::evalAdapterAndReadNum(long& readNum, bool isR2) {
 
     // we need at least 10000 valid records to evaluate
     if(records < 10000) {
-        for(int r=0; r<records; r++) {
-            delete loadedReads[r];
-            loadedReads[r] = NULL;
-        }
-        delete[] loadedReads;
         return "";
     }
 
-    string knownAdapter = checkKnownAdapters(loadedReads, records);
+    // TODO: probably want to pass by reference to mutate in place and avoid copying
+    std::string knownAdapter = checkKnownAdapters(loadedReads);
      if(knownAdapter.size() > 8) {
-        for(int r=0; r<records; r++) {
-            delete loadedReads[r];
-            loadedReads[r] = NULL;
-        }
-        delete[] loadedReads;
         return knownAdapter;
     }
 
     // we have to shift last cycle for evaluation since it is so noisy, especially for Illumina data
-    const int shiftTail = max(1, mOptions->trim.tail1);
+    const std::size_t shiftTail = std::max<std::size_t>(1, mOptions->trim.tail1);
 
     // why we add trim_tail here? since the last cycle are usually with low quality and should be trimmed
     const int keylen = 10;
-    int size = 1 << (keylen*2 );
-    unsigned int* counts = new unsigned int[size];
-    memset(counts, 0, sizeof(unsigned int)*size);
-    for(int i=0; i<records; i++) {
-        Read* r = loadedReads[i];
+    const std::size_t size = 1U << (static_cast<std::size_t>(keylen) * 2);
+    std::vector<unsigned int> counts(size, 0);
+
+    for (const auto& r : loadedReads) {
         int key = -1;
-        for(int pos = 20; pos <= r->length()-keylen-shiftTail; pos++) {
-            key = seq2int(r->mSeq, pos, keylen, key);
+        const std::size_t limit = r->length() - static_cast<std::size_t>(keylen) - shiftTail;
+        for(std::size_t pos = 20; pos <= limit; pos++) {
+            key = seq2int(r->seq(), static_cast<int>(pos), static_cast<int>(keylen), key);
             if(key >= 0) {
                 counts[key]++;
             }
@@ -445,7 +441,7 @@ string Evaluator::evalAdapterAndReadNum(long& readNum, bool isR2) {
     const int FOLD_THRESHOLD = 20;
     for(int t=0; t<topnum; t++) {
         int key = topkeys[t];
-        string seq = int2seq(key, keylen);
+        std::string seq = int2seq(key, keylen);
         if(key == 0)
             continue;
         long count = counts[key];
@@ -460,70 +456,59 @@ string Evaluator::evalAdapterAndReadNum(long& readNum, bool isR2) {
         if(diff <3){
             continue;
         }
-        string adapter = getAdapterWithSeed(key, loadedReads, records, keylen);
+        std::string adapter = getAdapterWithSeed(key, loadedReads, keylen);
         if(!adapter.empty()){
-            delete[] counts;
-            for(int r=0; r<records; r++) {
-                delete loadedReads[r];
-                loadedReads[r] = NULL;
-            }
-            delete[] loadedReads;
             return adapter;
         }
     }
 
-    delete[] counts;
-    for(int r=0; r<records; r++) {
-        delete loadedReads[r];
-        loadedReads[r] = NULL;
-    }
-    delete[] loadedReads;
     return "";
-
 }
 
-string Evaluator::getAdapterWithSeed(int seed, Read** loadedReads, long records, int keylen) {
+std::string Evaluator::getAdapterWithSeed(int seed, const std::vector<std::unique_ptr<Read>>& loadedReads, int keylen) {
     // we have to shift last cycle for evaluation since it is so noisy, especially for Illumina data
     const int shiftTail = max(1, mOptions->trim.tail1);
     const int MAX_SEARCH_LENGTH = 500;
     NucleotideTree forwardTree(mOptions);
     // forward search
-    for(int i=0; i<records; i++) {
-        Read* r = loadedReads[i];
+    for(const auto& r : loadedReads) {
         int key = -1;
-        for(int pos = 20; pos <= r->length()-keylen-shiftTail && pos <MAX_SEARCH_LENGTH; pos++) {
-            key = seq2int(r->mSeq, pos, keylen, key);
+        const int limit = static_cast<int>(r->length()) - keylen - shiftTail;
+        const auto& seq = r->seq();
+        for(int pos = 20; pos <= limit && pos <MAX_SEARCH_LENGTH; pos++) {
+            key = seq2int(seq, pos, keylen, key);
             if(key == seed) {
-                forwardTree.addSeq(r->mSeq->substr(pos+keylen, r->length()-keylen-shiftTail-pos));
+                forwardTree.addSeq(seq.substr(pos+keylen, limit - pos));
             }
         }
     }
     bool reachedLeaf = true;
-    string forwardPath = forwardTree.getDominantPath(reachedLeaf);
+    std::string forwardPath = forwardTree.getDominantPath(reachedLeaf);
 
     NucleotideTree backwardTree(mOptions);
     // backward search
-    for(int i=0; i<records; i++) {
-        Read* r = loadedReads[i];
+    for(const auto& r : loadedReads) {
         int key = -1;
-        for(int pos = 20; pos <= r->length()-keylen-shiftTail && pos <MAX_SEARCH_LENGTH; pos++) {
-            key = seq2int(r->mSeq, pos, keylen, key);
+        const int limit = static_cast<int>(r->length()) - keylen - shiftTail;
+        const auto& seq = r->seq();
+        for(int pos = 20; pos <= limit && pos <MAX_SEARCH_LENGTH; pos++) {
+            key = seq2int(seq, pos, keylen, key);
             if(key == seed) {
-                string seq =  r->mSeq->substr(0, pos);
-                string rcseq = reverse(seq);
+                std::string subseq =  seq.substr(0, pos);
+                std::string rcseq = reverse(subseq);
                 backwardTree.addSeq(rcseq);
             }
         }
     }
-    string backwardPath = backwardTree.getDominantPath(reachedLeaf);
+    std::string backwardPath = backwardTree.getDominantPath(reachedLeaf);
 
-    string adapter = reverse(backwardPath) + int2seq(seed, keylen) + forwardPath;
+    std::string adapter = reverse(backwardPath) + int2seq(seed, keylen) + forwardPath;
     if(adapter.length()>60)
         adapter.resize(60);
 
-    string matchedAdapter = matchKnownAdapter(adapter);
+    std::string matchedAdapter = matchKnownAdapter(adapter);
     if(!matchedAdapter.empty()) {
-        map<string, string> knownAdapters = getKnownAdapter();
+        map<std::string, std::string> knownAdapters = getKnownAdapter();
         cerr << knownAdapters[matchedAdapter] << endl << matchedAdapter << endl;
         return matchedAdapter;
     } else {
@@ -536,12 +521,12 @@ string Evaluator::getAdapterWithSeed(int seed, Read** loadedReads, long records,
     }
 }
 
-string Evaluator::matchKnownAdapter(string seq) {
-    map<string, string> knownAdapters = getKnownAdapter();
-    map<string, string>::iterator iter;
+std::string Evaluator::matchKnownAdapter(std::string seq) {
+    map<std::string, std::string> knownAdapters = getKnownAdapter();
+    map<std::string, std::string>::iterator iter;
     for(iter = knownAdapters.begin(); iter != knownAdapters.end(); iter++) {
-        string adapter = iter->first;
-        string desc = iter->second;
+        std::string adapter = iter->first;
+        std::string desc = iter->second;
         if(seq.length()<adapter.length()) {
             continue;
         }
@@ -556,9 +541,9 @@ string Evaluator::matchKnownAdapter(string seq) {
     return "";
 }
 
-string Evaluator::int2seq(unsigned int val, int seqlen) {
+std::string Evaluator::int2seq(unsigned int val, int seqlen) {
     char bases[4] = {'A', 'T', 'C', 'G'};
-    string ret(seqlen, 'N');
+    std::string ret(seqlen, 'N');
     int done = 0;
     while(done < seqlen) {
         ret[seqlen - done - 1] = bases[val & 0x03];
@@ -568,11 +553,7 @@ string Evaluator::int2seq(unsigned int val, int seqlen) {
     return ret;
 }
 
-int Evaluator::seq2int(string* seq, int pos, int keylen, int lastVal) {
-    return seq2int(*seq, pos, keylen, lastVal);
-}
-
-int Evaluator::seq2int(string& seq, int pos, int keylen, int lastVal) {
+int Evaluator::seq2int(const std::string& seq, int pos, int keylen, int lastVal) {
     if(lastVal >= 0) {
         const int mask = (1 << (keylen*2 )) - 1;
         int key = (lastVal<<2) & mask;
@@ -624,7 +605,7 @@ int Evaluator::seq2int(string& seq, int pos, int keylen, int lastVal) {
 
 bool Evaluator::test() {
     Evaluator eval(NULL);
-    string s = "ATCGATCGAT";
+    std::string s = "ATCGATCGAT";
     cerr << eval.int2seq(eval.seq2int(s, 0, 10, -1), 10) << endl;
     return eval.int2seq(eval.seq2int(s, 0, 10, -1), 10) == s;
 }

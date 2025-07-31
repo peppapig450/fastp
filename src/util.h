@@ -145,12 +145,8 @@ inline string replace(const string& str, const string& src, const string& dest)
     return ret;
 }
 
-inline string reverse(const string& str) {
-    string ret(str.length(), 0);
-    for(int pos=0; pos<str.length(); pos++) {
-        ret[pos] = str[str.length() - pos - 1];
-    }
-    return ret;
+inline std::string reverse(const std::string& str) {
+    return {str.rbegin(), str.rend()};
 }
 
 inline string basename(const string& filename){
