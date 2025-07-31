@@ -2,10 +2,11 @@
 
 #include <memory>
 #include <string>
-#include "options.h"
-#include "read.h" 
 #include <unordered_map>
 #include <vector>
+
+class Read; // Forward declare Read
+class Options; // Forward declare options
 
 class Evaluator{
 public:

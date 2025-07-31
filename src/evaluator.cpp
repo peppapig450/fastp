@@ -1,14 +1,17 @@
 #include "evaluator.h"
-#include "fastqreader.h"
+
 #include <algorithm>
 #include <map>
 #include <memory>
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include <memory.h>
-#include "nucleotidetree.h"
+
+#include "fastqreader.h"
 #include "knownadapters.h"
+#include "nucleotidetree.h"
+#include "options.h"
+#include "read.h"
 #include "util.h"
 
 namespace { // anon
