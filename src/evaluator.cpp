@@ -1,11 +1,26 @@
 #include "evaluator.h"
 #include "fastqreader.h"
+#include <algorithm>
+#include <cstring>
 #include <map>
 #include <unordered_map>
 #include <memory.h>
 #include "nucleotidetree.h"
 #include "knownadapters.h"
 #include "util.h"
+
+namespace { // anon
+
+// NEXTSEQ500, NEXTSEQ 550/550DX, NOVASEQ
+constexpr std::array<const char*, 4> prefixes = {"@NS", "@NB", "@NDX", "@A0"};
+
+auto starts_with_any(const std::string& name) -> bool {
+    return std::any_of(prefixes.begin(), prefixes.end(), [&](const char* prefix) {
+        std::size_t len = strlen(prefix);
+        return name.size() >= len && name.compare(0, len, prefix) == 0;
+    });
+}
+}  // namespace
 
 Evaluator::Evaluator(Options* opt){
     mOptions = opt;
@@ -18,13 +33,14 @@ Evaluator::~Evaluator(){
 bool Evaluator::isTwoColorSystem() {
     FastqReader reader(mOptions->in1);
 
-    Read* r = reader.read();
+    Read* r = reader.read(); // TODO: update fastqreader to return a unique ptr
 
     if(!r)
         return false;
 
     // NEXTSEQ500, NEXTSEQ 550/550DX, NOVASEQ
-    if(starts_with(r->mName, "@NS") || starts_with(r->mName, "@NB") || starts_with(r->mName, "@NDX") || starts_with(r->mName, "@A0")) {
+    const std::string& name = r->name();
+    if (starts_with_any(name)) {
         delete r;
         return true;
     }
