@@ -604,8 +604,47 @@ int Evaluator::seq2int(const std::string& seq, int pos, int keylen, int lastVal)
 }
 
 bool Evaluator::test() {
-    Evaluator eval(NULL);
-    std::string s = "ATCGATCGAT";
-    cerr << eval.int2seq(eval.seq2int(s, 0, 10, -1), 10) << endl;
-    return eval.int2seq(eval.seq2int(s, 0, 10, -1), 10) == s;
+    Evaluator eval(nullptr);
+    bool passedTests = true;
+
+    // round-trip several sequences through seq2int/int2seq
+    std::vector<std::string> seqs = {"ATCGATCGAT", "GGGGGGGGGG", "TATATATATA"};
+    for (const auto& s : seqs) {
+        int val = eval.seq2int(s, 0, static_cast<int>(s.length()), -1);
+        if (eval.int2seq(val, static_cast<int>(s.length())) != s) {
+            std::cerr << "round-trip failed for " << s << "\n";
+            passedTests = false;
+        }
+    }
+
+    // verify rolling seq2int produces the same result as computing from scratch
+    std::string rollingSeq = "ATCGATCG";
+    int keylen = 4;
+    int rolling = -1;
+    for (int i = 0; i <= static_cast<int>(rollingSeq.length()) - keylen; ++i) {
+        rolling = eval.seq2int(rollingSeq, i, keylen, rolling);
+        int fromScratch = eval.seq2int(rollingSeq, i, keylen, -1);
+        if (rolling != fromScratch) {
+            std::cerr << "rolling seq2int mismatch at pos " << i << "\n";
+            passedTests = false;
+        }
+    }
+
+    // seq2int should flag sequences containing invalid bases
+    if (eval.seq2int("ATCN", 0, 4, -1) != -1) {
+        std::cerr << "seq2int should return -1 for sequences containing N" << "\n";
+        passedTests = false;
+    }
+
+    // simple int2seq checks
+    if (eval.int2seq(0, 3) != "AAA") {
+        std::cerr << "int2seq failed for value 0" << "\n";
+        passedTests = false;
+    }
+    if (eval.int2seq((1 << 6) - 1, 3) != "GGG") {
+        std::cerr << "int2seq failed for max value" << "\n";
+        passedTests = false;
+    }
+
+    return passedTests;
 }
