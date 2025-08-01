@@ -14,6 +14,18 @@
 #include "read.h"
 #include "util.h"
 
+#ifdef ENABLE_COVERAGE
+    #define EXCLUDE_FROM_COVERAGE __attribute__((no_profile_instrument_function))
+#else
+    #define EXCLUDE_FROM_COVERAGE
+#endif
+
+#ifdef ENABLE_COVERAGE
+    #define EXCLUDE_FROM_COVERAGE __attribute__((no_profile_instrument_function))
+#else
+    #define EXCLUDE_FROM_COVERAGE
+#endif
+
 namespace { // anon
 
 // NEXTSEQ500, NEXTSEQ 550/550DX, NOVASEQ
@@ -606,6 +618,7 @@ int Evaluator::seq2int(const std::string& seq, int pos, int keylen, int lastVal)
     }
 }
 
+EXCLUDE_FROM_COVERAGE
 bool Evaluator::test() {
     Evaluator eval(nullptr);
     bool passedTests = true;
