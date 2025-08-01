@@ -10,6 +10,7 @@
 #define private public
 #include "evaluator.h"
 #undef private
+#include "adapter_reads.h"
 #include "fastqreader.h"
 #include "options.h"
 
@@ -57,6 +58,18 @@ TEST(EvaluatorTests, MatchKnownAdapter) {
     EXPECT_EQ("", Evaluator::matchKnownAdapter("TTTTTTTTTT"));
 }
 
+TEST(EvaluatorTests, CheckKnownAdaptersPositive) {
+    Evaluator eval(nullptr);
+    auto      reads = createReadsWithKnownAdapter();
+    EXPECT_EQ("AGATCGGAAGAGCACACGTCTGAACTCCAGTCA", eval.checkKnownAdapters(reads));
+}
+
+TEST(EvaluatorTests, CheckKnownAdaptersNegative) {
+    Evaluator eval(nullptr);
+    auto      reads = createReadsWithoutAdapter();
+    EXPECT_EQ("", eval.checkKnownAdapters(reads));
+}
+
 TEST(EvaluatorTests, SeqIntRoundTrip) {
     Evaluator eval(nullptr);
     string    s   = "ATCGAT";
@@ -71,11 +84,11 @@ TEST(EvaluatorTests, Seq2IntInvalidBase) {
 
 TEST(EvaluatorTests, RollingSeq2IntMatchesFreshCall) {
     Evaluator eval(nullptr);
-    string    seq    = "ATCGATCG";
-    int       keylen = 4;
+    string    seq     = "ATCGATCG";
+    int       keylen  = 4;
     int       rolling = -1;
     for (int i = 0; i <= static_cast<int>(seq.size()) - keylen; ++i) {
-        rolling = eval.seq2int(seq, i, keylen, rolling);
+        rolling         = eval.seq2int(seq, i, keylen, rolling);
         int fromScratch = eval.seq2int(seq, i, keylen, -1);
         EXPECT_EQ(fromScratch, rolling) << "Mismatch at position " << i;
     }
