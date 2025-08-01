@@ -285,6 +285,52 @@ TEST(EvaluatorTests, EvalAdapterAndReadNumDetectsAdapter) {
                 numReads * 0.05);
 }
 
+TEST(EvaluatorTests, EvalAdapterAndReadNumTooFewReadsReturnsEmpty) {
+    const int numReads = 5000;
+    vector<string> names;
+    vector<string> seqs;
+    for (int i = 0; i < numReads; ++i) {
+        names.push_back("@r" + std::to_string(i));
+        seqs.push_back("ACGTACGTAC");
+    }
+    string  path = create_fastq(names, seqs, "no_adapter.fq");
+    Options opt;
+    opt.in1 = path;
+    Evaluator eval(&opt);
+    long   readNum = 0;
+    string detected = eval.evalAdapterAndReadNum(readNum, false);
+    EXPECT_EQ("", detected);
+    EXPECT_EQ(numReads, readNum);
+}
+
+TEST(EvaluatorTests, EvalAdapterAndReadNumReadsFromIn2) {
+    const int numReads1 = 100;
+    const int numReads2 = 200;
+    vector<string> names1;
+    vector<string> seqs1;
+    for (int i = 0; i < numReads1; ++i) {
+        names1.push_back("@r1_" + std::to_string(i));
+        seqs1.push_back("ACGTACGTAC");
+    }
+    vector<string> names2;
+    vector<string> seqs2;
+    for (int i = 0; i < numReads2; ++i) {
+        names2.push_back("@r2_" + std::to_string(i));
+        seqs2.push_back("TTGGAACCAA");
+    }
+    string path1 = create_fastq(names1, seqs1, "reads1.fq");
+    string path2 = create_fastq(names2, seqs2, "reads2.fq");
+    Options opt;
+    opt.in1 = path1;
+    opt.in2 = path2;
+    Evaluator eval(&opt);
+    long   readNum = 0;
+    string detected = eval.evalAdapterAndReadNum(readNum, true);
+    EXPECT_EQ("", detected);
+    EXPECT_EQ(numReads2, readNum);
+    EXPECT_NE(numReads1, readNum);
+}
+
 TEST(EvaluatorTests, GetAdapterWithSeedReconstructsAdapter) {
     const string adapter = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA";
     vector<string> names;
