@@ -2,32 +2,35 @@ CXX       := clang++
 CXXFLAGS  := -std=c++17 -I. -Istubs -I../src -pthread
 LDFLAGS   := -lgtest -lgtest_main
 
-SRCS      := evaluator_tests.cpp \
-             ../src/evaluator.cpp \
-             ../src/nucleotidetree.cpp \
-             ../src/options.cpp \
-             ../src/fastareader.cpp \
-             stubs/fastqreader.cpp
+ifeq ($(COVERAGE),1)
+	CXXFLAGS += -fprofile-instr-generate -fcoverage-mapping
+	LDFLAGS  += -fprofile-instr-generate
+	PROFILE_OUTPUT := LLVM_PROFILE_FILE=coverage.profraw
+endif
 
-# Convert source path to build path — e.g., ../src/foo.cpp → build/../src/foo.o
-OBJS      := $(SRCS:.cpp=.o)
-OBJS      := $(addprefix build/,$(OBJS))
+SRCS := evaluator_tests.cpp \
+        ../src/evaluator.cpp \
+        ../src/nucleotidetree.cpp \
+        ../src/options.cpp \
+        ../src/fastareader.cpp \
+        stubs/fastqreader.cpp
 
-TARGET    := evaluator_tests
+# Map sources to object files
+OBJS := $(patsubst ../src/%.cpp,build/src/%.o,$(SRCS))
+OBJS := $(patsubst stubs/%.cpp,build/stubs/%.o,$(OBJS))
+OBJS := $(patsubst %.cpp,build/%.o,$(OBJS))
 
-.PHONY: all clean test
+TARGET := evaluator_tests
 
-all: build $(TARGET)
+.PHONY: all clean test coverage-report
 
-# Compile each source to a namespaced object file in build/
+all: $(TARGET)
+
 $(TARGET): $(OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
+# Correctly scoped pattern rules
 build/%.o: %.cpp
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
-
-build/../src/%.o: ../src/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -35,11 +38,19 @@ build/stubs/%.o: stubs/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-build:
-	mkdir -p build
+build/src/%.o: ../src/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 test: all
-	./$(TARGET)
+	$(PROFILE_OUTPUT) ./$(TARGET)
+
+coverage-report: test
+	llvm-profdata merge -sparse coverage.profraw -o coverage.profdata
+	llvm-cov show ./$(TARGET) -instr-profile=coverage.profdata \
+		-format=html -output-dir=coverage_html \
+		-ignore-filename-regex='^/usr'
 
 clean:
-	rm -f $(TARGET) build/**/*.o build/*.o *.fq
+	rm -f $(TARGET) coverage.profraw coverage.profdata *.fq
+	rm -rf build coverage_html
