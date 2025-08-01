@@ -69,6 +69,18 @@ TEST(EvaluatorTests, Seq2IntInvalidBase) {
     EXPECT_EQ(-1, eval.seq2int("ATCN", 0, 4, -1));
 }
 
+TEST(EvaluatorTests, RollingSeq2IntMatchesFreshCall) {
+    Evaluator eval(nullptr);
+    string    seq    = "ATCGATCG";
+    int       keylen = 4;
+    int       rolling = -1;
+    for (int i = 0; i <= static_cast<int>(seq.size()) - keylen; ++i) {
+        rolling = eval.seq2int(seq, i, keylen, rolling);
+        int fromScratch = eval.seq2int(seq, i, keylen, -1);
+        EXPECT_EQ(fromScratch, rolling) << "Mismatch at position " << i;
+    }
+}
+
 TEST(EvaluatorTests, IsTwoColorSystem) {
     // FASTQ with read name starting with @NS should be detected as two-color
     vector<string> namesTrue = {"@NS123"};
