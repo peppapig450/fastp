@@ -13,6 +13,7 @@
 #undef private
 #include "adapter_reads.h"
 #include "fastqreader.h"
+#include "scoped_fastq.h"
 #include "options.h"
 
 using std::string;
@@ -20,17 +21,9 @@ using std::unique_ptr;
 using std::unordered_map;
 using std::vector;
 
-static string create_fastq(const vector<string>& names,
-                           const vector<string>& seqs,
-                           const string&         path) {
-    std::ofstream ofs(path);
-    for (size_t i = 0; i < names.size(); ++i) {
-        ofs << names[i] << "\n";
-        ofs << seqs[i] << "\n";
-        ofs << "+\n";
-        ofs << string(seqs[i].size(), 'I') << "\n";
-    }
-    return path;
+static ScopedFastq create_fastq(const vector<string>& names,
+                                const vector<string>& seqs) {
+    return ScopedFastq(names, seqs);
 }
 
 static void generate_reads_with_adapter(int                 numReads,
@@ -57,17 +50,17 @@ static void generate_reads_with_adapter(int                 numReads,
 TEST(EvaluatorTests, ComputeSeqLen) {
     vector<string> names = {"@r1", "@r2"};
     vector<string> seqs  = {"ATCG", "ATCGAT"};
-    string         path  = create_fastq(names, seqs, "len.fq");
+    auto           fastq = create_fastq(names, seqs);
     Evaluator      eval(nullptr);
-    EXPECT_EQ(6, eval.computeSeqLen(path));
+    EXPECT_EQ(6, eval.computeSeqLen(fastq.path()));
 }
 
 TEST(EvaluatorTests, EvaluateReadNum) {
     vector<string> names = {"@r1", "@r2", "@r3"};
     vector<string> seqs(3, "ATCG");
-    string         path = create_fastq(names, seqs, "readnum.fq");
+    auto           fastq = create_fastq(names, seqs);
     Options        opt;
-    opt.in1 = path;
+    opt.in1 = fastq.path();
     Evaluator eval(&opt);
     long      readNum = 0;
     eval.evaluateReadNum(readNum);
@@ -137,17 +130,17 @@ TEST(EvaluatorTests, IsTwoColorSystem) {
     // FASTQ with read name starting with @NS should be detected as two-color
     vector<string> namesTrue = {"@NS123"};
     vector<string> seqs      = {"ATCG"};
-    string         pathTrue  = create_fastq(namesTrue, seqs, "twocolor_true.fq");
+    auto           fastqTrue = create_fastq(namesTrue, seqs);
     Options        optTrue;
-    optTrue.in1 = pathTrue;
+    optTrue.in1 = fastqTrue.path();
     Evaluator evalTrue(&optTrue);
     EXPECT_TRUE(evalTrue.isTwoColorSystem());
 
     // FASTQ with non-matching read name should not be detected as two-color
     vector<string> namesFalse = {"@XX123"};
-    string         pathFalse  = create_fastq(namesFalse, seqs, "twocolor_false.fq");
+    auto           fastqFalse = create_fastq(namesFalse, seqs);
     Options        optFalse;
-    optFalse.in1 = pathFalse;
+    optFalse.in1 = fastqFalse.path();
     Evaluator evalFalse(&optFalse);
     EXPECT_FALSE(evalFalse.isTwoColorSystem());
 }
@@ -172,12 +165,12 @@ TEST(EvaluatorTests, EvaluateSeqLenAndOverRepSeqs) {
         seqs2.emplace_back(len2, 'C');
     }
 
-    string path1 = create_fastq(names1, seqs1, "overrep1.fq");
-    string path2 = create_fastq(names2, seqs2, "overrep2.fq");
+    auto fastq1 = create_fastq(names1, seqs1);
+    auto fastq2 = create_fastq(names2, seqs2);
 
     Options opt;
-    opt.in1 = path1;
-    opt.in2 = path2;
+    opt.in1 = fastq1.path();
+    opt.in2 = fastq2.path();
 
     Evaluator eval(&opt);
     eval.evaluateSeqLen();
@@ -239,10 +232,10 @@ TEST(EvaluatorTests, ComputeOverRepSeqPrunesSubstrings) {
         seqs.push_back(hundred + rand_seq(1));
     }
 
-    std::string path = create_fastq(names, seqs, "overrep_substring.fq");
+    auto       fastq = create_fastq(names, seqs);
 
     Options    opt;
-    opt.in1 = path;
+    opt.in1 = fastq.path();
     Evaluator eval(&opt);
     eval.evaluateSeqLen();
     eval.evaluateOverRepSeqs();
@@ -274,9 +267,9 @@ TEST(EvaluatorTests, EvalAdapterAndReadNumDetectsAdapter) {
     vector<string> seqs;
     const int numReads = 10000;
     generate_reads_with_adapter(numReads, adapter, names, seqs);
-    string  path = create_fastq(names, seqs, "adapter_eval.fq");
+    auto    fastq = create_fastq(names, seqs);
     Options opt;
-    opt.in1 = path;
+    opt.in1 = fastq.path();
     Evaluator eval(&opt);
     long      readNum = 0;
     string    detected = eval.evalAdapterAndReadNum(readNum, false);
@@ -293,9 +286,9 @@ TEST(EvaluatorTests, EvalAdapterAndReadNumTooFewReadsReturnsEmpty) {
         names.push_back("@r" + std::to_string(i));
         seqs.push_back("ACGTACGTAC");
     }
-    string  path = create_fastq(names, seqs, "no_adapter.fq");
+    auto    fastq = create_fastq(names, seqs);
     Options opt;
-    opt.in1 = path;
+    opt.in1 = fastq.path();
     Evaluator eval(&opt);
     long   readNum = 0;
     string detected = eval.evalAdapterAndReadNum(readNum, false);
@@ -318,11 +311,11 @@ TEST(EvaluatorTests, EvalAdapterAndReadNumReadsFromIn2) {
         names2.push_back("@r2_" + std::to_string(i));
         seqs2.push_back("TTGGAACCAA");
     }
-    string path1 = create_fastq(names1, seqs1, "reads1.fq");
-    string path2 = create_fastq(names2, seqs2, "reads2.fq");
+    auto fastq1 = create_fastq(names1, seqs1);
+    auto fastq2 = create_fastq(names2, seqs2);
     Options opt;
-    opt.in1 = path1;
-    opt.in2 = path2;
+    opt.in1 = fastq1.path();
+    opt.in2 = fastq2.path();
     Evaluator eval(&opt);
     long   readNum = 0;
     string detected = eval.evalAdapterAndReadNum(readNum, true);
