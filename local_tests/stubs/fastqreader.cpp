@@ -1,5 +1,5 @@
 #include "fastqreader.h"
-#include "read.h"
+#include "../../src/read.h"
 #include <sys/stat.h>
 
 FastqReader::FastqReader(std::string filename, bool hasQuality, bool phred64) : mIn(filename), mBytesRead(0), mTotalSize(0) {

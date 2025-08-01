@@ -9,7 +9,6 @@
 #include "evaluator.h"
 #undef private
 #include "fastqreader.h"
-#include "read.h"
 #include "options.h"
 
 using std::string;
@@ -64,3 +63,21 @@ TEST(EvaluatorTests, Seq2IntInvalidBase) {
     Evaluator eval(nullptr);
     EXPECT_EQ(-1, eval.seq2int("ATCN",0,4,-1));
 }
+
+TEST(EvaluatorTests, IsTwoColorSystem) {
+    // FASTQ with read name starting with @NS should be detected as two-color
+    vector<string> namesTrue = {"@NS123"};
+    vector<string> seqs = {"ATCG"};
+    string pathTrue = create_fastq(namesTrue, seqs, "twocolor_true.fq");
+    Options optTrue; optTrue.in1 = pathTrue;
+    Evaluator evalTrue(&optTrue);
+    EXPECT_TRUE(evalTrue.isTwoColorSystem());
+
+    // FASTQ with non-matching read name should not be detected as two-color
+    vector<string> namesFalse = {"@XX123"};
+    string pathFalse = create_fastq(namesFalse, seqs, "twocolor_false.fq");
+    Options optFalse; optFalse.in1 = pathFalse;
+    Evaluator evalFalse(&optFalse);
+    EXPECT_FALSE(evalFalse.isTwoColorSystem());
+}
+

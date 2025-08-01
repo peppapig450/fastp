@@ -13,6 +13,8 @@ SRCS := evaluator_tests.cpp \
         ../src/nucleotidetree.cpp \
         ../src/options.cpp \
         ../src/fastareader.cpp \
+        ../src/read.cpp \
+        ../src/sequence.cpp \
         stubs/fastqreader.cpp
 
 # Map sources to object files
