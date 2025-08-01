@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <random>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -30,6 +31,27 @@ static string create_fastq(const vector<string>& names,
         ofs << string(seqs[i].size(), 'I') << "\n";
     }
     return path;
+}
+
+static void generate_reads_with_adapter(int                 numReads,
+                                        const string&       adapter,
+                                        vector<string>&     names,
+                                        vector<string>&     seqs) {
+    std::mt19937                          rng(1);
+    std::uniform_int_distribution<int>    dist(0, 3);
+    const char                            bases[4] = {'A', 'T', 'C', 'G'};
+    names.clear();
+    seqs.clear();
+    names.reserve(numReads);
+    seqs.reserve(numReads);
+    for (int i = 0; i < numReads; ++i) {
+        string prefix(20, 'A');
+        string suffix(10, 'A');
+        for (char& c : prefix) c = bases[dist(rng)];
+        for (char& c : suffix) c = bases[dist(rng)];
+        names.push_back("@r" + std::to_string(i));
+        seqs.push_back(prefix + adapter + suffix);
+    }
 }
 
 TEST(EvaluatorTests, ComputeSeqLen) {
@@ -154,4 +176,41 @@ TEST(EvaluatorTests, EvaluateSeqLenAndOverRepSeqs) {
     auto it2 = opt.overRepSeqs2.find(string(10, 'C'));
     EXPECT_NE(opt.overRepSeqs2.end(), it2);
     EXPECT_GE(it2->second, 500);
+}
+
+TEST(EvaluatorTests, EvalAdapterAndReadNumDetectsAdapter) {
+    const string adapter = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA";
+    vector<string> names;
+    vector<string> seqs;
+    const int numReads = 10000;
+    generate_reads_with_adapter(numReads, adapter, names, seqs);
+    string  path = create_fastq(names, seqs, "adapter_eval.fq");
+    Options opt;
+    opt.in1 = path;
+    Evaluator eval(&opt);
+    long      readNum = 0;
+    string    detected = eval.evalAdapterAndReadNum(readNum, false);
+    EXPECT_EQ(adapter, detected);
+    EXPECT_NEAR(static_cast<double>(numReads), static_cast<double>(readNum),
+                numReads * 0.05);
+}
+
+TEST(EvaluatorTests, GetAdapterWithSeedReconstructsAdapter) {
+    const string adapter = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA";
+    vector<string> names;
+    vector<string> seqs;
+    const int numReads = 200;
+    generate_reads_with_adapter(numReads, adapter, names, seqs);
+
+    vector<unique_ptr<Read>> reads;
+    for (int i = 0; i < numReads; ++i) {
+        reads.emplace_back(std::make_unique<Read>(names[i], seqs[i]));
+    }
+
+    Options    opt;
+    Evaluator  eval(&opt);
+    const int  keylen = 10;
+    int        seed   = eval.seq2int(adapter, 0, keylen, -1);
+    string     got    = eval.getAdapterWithSeed(seed, reads, keylen);
+    EXPECT_EQ(adapter, got);
 }
