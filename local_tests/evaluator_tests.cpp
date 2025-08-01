@@ -178,6 +178,79 @@ TEST(EvaluatorTests, EvaluateSeqLenAndOverRepSeqs) {
     EXPECT_GE(it2->second, 500);
 }
 
+TEST(EvaluatorTests, ComputeOverRepSeqPrunesSubstrings) {
+    std::mt19937                       rng(1);
+    std::uniform_int_distribution<int> dist(0, 3);
+    const char                         bases[4] = {'A', 'C', 'G', 'T'};
+    auto rand_seq = [&](int len) {
+        std::string s;
+        s.reserve(len);
+        for (int i = 0; i < len; ++i) s += bases[dist(rng)];
+        return s;
+    };
+
+    std::vector<std::string> names;
+    std::vector<std::string> seqs;
+
+    std::string tenC(10, 'C');
+    for (int i = 0; i < 500; ++i) {
+        names.push_back("@c10_" + std::to_string(i));
+        seqs.push_back(tenC + rand_seq(91));
+    }
+
+    std::string tenA(10, 'A');
+    for (int i = 0; i < 600; ++i) {
+        names.push_back("@a10_" + std::to_string(i));
+        seqs.push_back(tenA + rand_seq(91));
+    }
+
+    std::string twenty = tenA + std::string(10, 'T');
+    for (int i = 0; i < 100; ++i) {
+        names.push_back("@a20_" + std::to_string(i));
+        seqs.push_back(twenty + rand_seq(81));
+    }
+
+    std::string forty = rand_seq(40);
+    for (int i = 0; i < 20; ++i) {
+        names.push_back("@r40_" + std::to_string(i));
+        seqs.push_back(forty + rand_seq(61));
+    }
+
+    std::string hundred = rand_seq(100);
+    for (int i = 0; i < 5; ++i) {
+        names.push_back("@r100_" + std::to_string(i));
+        seqs.push_back(hundred + rand_seq(1));
+    }
+
+    std::string path = create_fastq(names, seqs, "overrep_substring.fq");
+
+    Options    opt;
+    opt.in1 = path;
+    Evaluator eval(&opt);
+    eval.evaluateSeqLen();
+    eval.evaluateOverRepSeqs();
+
+    auto& map = opt.overRepSeqs1;
+
+    auto itTenC = map.find(tenC);
+    EXPECT_NE(map.end(), itTenC);
+    EXPECT_GE(itTenC->second, 500);
+
+    auto itTwenty = map.find(twenty);
+    EXPECT_NE(map.end(), itTwenty);
+    EXPECT_GE(itTwenty->second, 100);
+
+    auto itForty = map.find(forty);
+    EXPECT_NE(map.end(), itForty);
+    EXPECT_GE(itForty->second, 20);
+
+    auto itHundred = map.find(hundred);
+    EXPECT_NE(map.end(), itHundred);
+    EXPECT_GE(itHundred->second, 5);
+
+    EXPECT_EQ(map.end(), map.find(tenA));
+}
+
 TEST(EvaluatorTests, EvalAdapterAndReadNumDetectsAdapter) {
     const string adapter = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA";
     vector<string> names;
