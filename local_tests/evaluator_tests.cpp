@@ -74,6 +74,23 @@ TEST(EvaluatorTests, EvaluateReadNum) {
     EXPECT_EQ(3, readNum);
 }
 
+// Ensure evaluateReadNum estimates the total read count using a bytes-per-read
+// calculation when the input exceeds the internal sampling limits.
+TEST(EvaluatorTests, EvaluateReadNumUsesBytesPerRead) {
+    Options opt;
+    opt.in1 = MOCK_LARGE_DATASET; // trigger synthetic large dataset
+    Evaluator eval(&opt);
+    long readNum = 0;
+    eval.evaluateReadNum(readNum);
+
+    const long READ_LIMIT = 512 * 1024;
+    const long TOTAL_READS = 1024 * 1024; // defined in stub
+    const long EXPECTED = static_cast<long>(TOTAL_READS * 1.01);
+
+    EXPECT_GT(readNum, READ_LIMIT);
+    EXPECT_NEAR(EXPECTED, readNum, TOTAL_READS * 0.02);
+}
+
 TEST(EvaluatorTests, MatchKnownAdapter) {
     string adapter = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA";
     EXPECT_EQ(adapter, Evaluator::matchKnownAdapter(adapter + "AAAA"));
