@@ -20,12 +20,6 @@
     #define EXCLUDE_FROM_COVERAGE
 #endif
 
-#ifdef ENABLE_COVERAGE
-    #define EXCLUDE_FROM_COVERAGE __attribute__((no_profile_instrument_function))
-#else
-    #define EXCLUDE_FROM_COVERAGE
-#endif
-
 namespace { // anon
 
 // NEXTSEQ500, NEXTSEQ 550/550DX, NOVASEQ
@@ -39,13 +33,7 @@ auto starts_with_any(const std::string& name) -> bool {
 }
 }  // namespace
 
-Evaluator::Evaluator(Options* opt){
-    mOptions = opt;
-}
-
-
-Evaluator::~Evaluator(){
-}
+Evaluator::Evaluator(Options* opt) noexcept : mOptions(opt) {}
 
 bool Evaluator::isTwoColorSystem() {
     FastqReader reader(mOptions->in1);
@@ -73,7 +61,7 @@ void Evaluator::evaluateSeqLen() {
         mOptions->seqLen2 = computeSeqLen(mOptions->in2);
 }
 
-int Evaluator::computeSeqLen(std::string filename) {
+int Evaluator::computeSeqLen(const std::string& filename) {
     FastqReader reader(filename);
 
     long records = 0;
@@ -94,7 +82,7 @@ int Evaluator::computeSeqLen(std::string filename) {
     return seqlen;
 }
 
-void Evaluator::computeOverRepSeq(std::string filename, std::unordered_map<string, long>& hotseqs, int seqlen) {
+void Evaluator::computeOverRepSeq(const std::string& filename, std::unordered_map<string, long>& hotseqs, int seqlen) {
     FastqReader reader(filename);
 
     std::unordered_map<string, long> seqCounts;
@@ -536,7 +524,7 @@ std::string Evaluator::getAdapterWithSeed(int seed, const std::vector<std::uniqu
     }
 }
 
-std::string Evaluator::matchKnownAdapter(std::string seq) {
+std::string Evaluator::matchKnownAdapter(const std::string& seq) {
     map<std::string, std::string> knownAdapters = getKnownAdapter();
     map<std::string, std::string>::iterator iter;
     for(iter = knownAdapters.begin(); iter != knownAdapters.end(); iter++) {
@@ -556,7 +544,7 @@ std::string Evaluator::matchKnownAdapter(std::string seq) {
     return "";
 }
 
-std::string Evaluator::int2seq(unsigned int val, int seqlen) {
+auto Evaluator::int2seq(unsigned int val, int seqlen) const -> std::string {
     char bases[4] = {'A', 'T', 'C', 'G'};
     std::string ret(seqlen, 'N');
     int done = 0;
@@ -568,8 +556,8 @@ std::string Evaluator::int2seq(unsigned int val, int seqlen) {
     return ret;
 }
 
-int Evaluator::seq2int(const std::string& seq, int pos, int keylen, int lastVal) {
-    if(lastVal >= 0) {
+auto Evaluator::seq2int(const std::string& seq, int pos, int keylen, int lastVal) const -> int {
+    if (lastVal >= 0) {
         const int mask = (1 << (keylen*2 )) - 1;
         int key = (lastVal<<2) & mask;
         char base = seq[pos + keylen - 1];
