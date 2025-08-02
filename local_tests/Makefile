@@ -6,8 +6,6 @@ ifeq ($(COVERAGE),1)
 	CXXFLAGS += -fprofile-instr-generate -fcoverage-mapping -DENABLE_COVERAGE
 	LDFLAGS  += -fprofile-instr-generate
 	PROFILE_OUTPUT := LLVM_PROFILE_FILE=coverage.profraw
-else
-	CXXFLAGS += -fno-instrument-functions
 endif
 
 SRCS := evaluator_tests.cpp \
