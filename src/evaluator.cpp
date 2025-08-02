@@ -200,44 +200,56 @@ void Evaluator::evaluateOverRepSeqs() {
 }
 
 void Evaluator::evaluateReadNum(long& readNum) {
-    FastqReader reader(mOptions->in1);
+    // Limit reads to ~0.5 million records
+    constexpr std::int64_t kReadLimit = 512LL * 1024;
+    // Same cap in bases (NOTE: This assumes 150bp that may not be optimal,
+    // but for consistency with the original code we keep it)
+    constexpr std::int64_t kBaseLimit = 151LL * kReadLimit;
+    // +1% head room
+    constexpr double kSafetyFactor    = 1.01;
 
-    const long READ_LIMIT = 512*1024;
-    const long BASE_LIMIT = 151 * 512*1024;
-    long records = 0;
-    long bases = 0;
-    std::size_t firstReadPos = 0;
+    FastqReader reader {mOptions->in1};
 
-    std::size_t bytesRead;
-    std::size_t bytesTotal;
+    std::size_t bytesRead      = 0;
+    std::size_t bytesTotal     = 0;
+    std::size_t firstRecOffset = 0;
 
-    bool reachedEOF = false;
-    bool first = true;
-    while(records < READ_LIMIT && bases < BASE_LIMIT) {
-        Read* r = reader.read();
-        if(!r) {
+    std::int64_t sampledReads = 0;
+    std::int64_t sampledBases = 0;
+    bool         reachedEOF   = false;
+
+    while (sampledReads < kReadLimit && sampledBases < kBaseLimit) {
+        std::unique_ptr<Read> rec {reader.read()};
+        // If the returned pointer is null, there are no reads left so we mark EOF and break
+        if (rec == nullptr) {
             reachedEOF = true;
             break;
         }
-        if(first) {
+
+        // After the very first read we get the entire file size
+        if (sampledReads == 0) {
             reader.getBytes(bytesRead, bytesTotal);
-            firstReadPos = bytesRead;
-            first = false;
+            firstRecOffset = bytesRead;
         }
-        records++;
-        bases += r->length();
-        delete r;
+
+        ++sampledReads;
+        sampledBases += rec->length();
     }
 
     readNum = 0;
-    if(reachedEOF){
-        readNum = records;
-    } else if(records>0) {
-        // by the way, update readNum so we don't need to evaluate it if splitting output is enabled
+    // For small files where we reach the end of the file within the limit we use the exact count
+    if (reachedEOF) {
+        readNum = sampledReads;
+        // For larger files exceeding the read limit we extrapolate progress so far
+    } else if (sampledReads > 0) {
+        // We call getBytes to update bytesRead so we don't need to re-evaluate if splitting output
+        // is enabled
         reader.getBytes(bytesRead, bytesTotal);
-        double bytesPerRead = (double)(bytesRead - firstReadPos) / (double) records;
-        // increase it by 1% since the evaluation is usually a bit lower due to bad quality causes lower compression rate
-        readNum = (long) (bytesTotal*1.01 / bytesPerRead);
+        const double bytesPerRead =
+            static_cast<double>(bytesRead - firstRecOffset) / static_cast<double>(sampledReads);
+
+        // We use a 1% safety limit to account for under-evaluation due to potential bad quality
+        readNum = static_cast<long>(static_cast<double>(bytesTotal) * kSafetyFactor / bytesPerRead);
     }
 }
 
