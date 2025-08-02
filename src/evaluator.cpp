@@ -38,20 +38,16 @@ Evaluator::Evaluator(Options* opt) noexcept : mOptions(opt) {}
 bool Evaluator::isTwoColorSystem() {
     FastqReader reader(mOptions->in1);
 
-    Read* r = reader.read(); // TODO: update fastqreader to return a unique ptr
+    // Wrap in a unique_ptr for now
+    std::unique_ptr<Read> r{reader.read()}; // TODO: update fastqreader to return a unique ptr
 
-    if(!r)
+    if (r == nullptr) {
         return false;
+    }
 
     // NEXTSEQ500, NEXTSEQ 550/550DX, NOVASEQ
     const std::string& name = r->name();
-    if (starts_with_any(name)) {
-        delete r;
-        return true;
-    }
-
-    delete r;
-    return false;
+    return starts_with_any(name);
 }
 
 void Evaluator::evaluateSeqLen() {
