@@ -254,11 +254,10 @@ void Evaluator::evaluateReadNum(long& readNum) {
 }
 
 std::string Evaluator::checkKnownAdapters(const std::vector<std::unique_ptr<Read>>& reads) {
-    std::map<std::string, std::string> knownAdapters = getKnownAdapter();
-    std::map<std::string, int> possibleCounts;
-    std::map<std::string, int> mismatches;
+    const auto& knownAdapters = adapters::getKnown();
+    std::unordered_map<std::string, int> possibleCounts;
+    std::unordered_map<std::string, int> mismatches;
 
-    // TODO: These should probably be constexpr
     // for performance, up to 100k reads and 100M bases
     const int MAX_CHECK_READS = 100000;
     const int MAX_CHECK_BASES = MAX_CHECK_READS*1000;
@@ -268,7 +267,7 @@ std::string Evaluator::checkKnownAdapters(const std::vector<std::unique_ptr<Read
     const int matchReq = 8;
     const int allowOneMismatchForEach = 16;
 
-    std::map<std::string, std::string>::iterator iter;
+    std::unordered_map<std::string, std::string>::const_iterator iter;
 
     for(iter = knownAdapters.begin(); iter!= knownAdapters.end(); iter++) {
         std::string adapter = iter->first;
@@ -329,7 +328,7 @@ std::string Evaluator::checkKnownAdapters(const std::vector<std::unique_ptr<Read
 
     std::string adapter;
     int maxCount = 0;
-    std::map<std::string, int>::iterator iter2;
+    std::unordered_map<std::string, int>::iterator iter2;
     for(iter2 = possibleCounts.begin(); iter2 != possibleCounts.end(); iter2++) {
         if(iter2->second > maxCount) {
             adapter = iter2->first;
@@ -337,7 +336,7 @@ std::string Evaluator::checkKnownAdapters(const std::vector<std::unique_ptr<Read
         }
     }
     if(maxCount > checkedReads/50 || (maxCount > checkedReads/200 && mismatches[adapter] < checkedReads)) {
-        cerr << knownAdapters[adapter] << endl;
+        cerr << knownAdapters.at(adapter) << endl;
         cerr << adapter << endl;
         return adapter;
     }
@@ -542,8 +541,8 @@ std::string Evaluator::getAdapterWithSeed(int seed, const std::vector<std::uniqu
 
     std::string matchedAdapter = matchKnownAdapter(adapter);
     if(!matchedAdapter.empty()) {
-        map<std::string, std::string> knownAdapters = getKnownAdapter();
-        cerr << knownAdapters[matchedAdapter] << endl << matchedAdapter << endl;
+        const auto& knownAdapters = adapters::getKnown();
+        cerr << knownAdapters.at(matchedAdapter) << endl << matchedAdapter << endl;
         return matchedAdapter;
     } else {
         if(reachedLeaf) {
@@ -556,8 +555,8 @@ std::string Evaluator::getAdapterWithSeed(int seed, const std::vector<std::uniqu
 }
 
 std::string Evaluator::matchKnownAdapter(const std::string& seq) {
-    map<std::string, std::string> knownAdapters = getKnownAdapter();
-    map<std::string, std::string>::iterator iter;
+    const auto& knownAdapters = adapters::getKnown();
+    std::unordered_map<std::string, std::string>::const_iterator iter;
     for(iter = knownAdapters.begin(); iter != knownAdapters.end(); iter++) {
         std::string adapter = iter->first;
         std::string desc = iter->second;

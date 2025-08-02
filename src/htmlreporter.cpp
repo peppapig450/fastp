@@ -142,16 +142,19 @@ void HtmlReporter::printSummary(ofstream& ofs, FilterResult* result, Stats* preS
         outputRow(ofs, "Insert size peak:", mInsertSizePeak);
     }
     if(mOptions->adapterCuttingEnabled()) {
-        map<string, string> knownAdapters = getKnownAdapter();
+        const auto& knownAdapters = adapters::getKnown();
         if(!mOptions->adapter.detectedAdapter1.empty()) {
             string adapterinfo1 = mOptions->adapter.detectedAdapter1;
-            if(knownAdapters.count(adapterinfo1) > 0)
-                adapterinfo1 += " -" + knownAdapters[mOptions->adapter.detectedAdapter1];
+            auto it = knownAdapters.find(adapterinfo1);
+            if(it != knownAdapters.end())
+                adapterinfo1 += " -" + it->second;
             outputRow(ofs, "Detected read1 adapter:", adapterinfo1);
-        } if(!mOptions->adapter.detectedAdapter2.empty()) {
+        }
+        if(!mOptions->adapter.detectedAdapter2.empty()) {
             string adapterinfo2 = mOptions->adapter.detectedAdapter2;
-            if(knownAdapters.count(adapterinfo2) > 0)
-                adapterinfo2 += " -" + knownAdapters[mOptions->adapter.detectedAdapter2];
+            auto it = knownAdapters.find(adapterinfo2);
+            if(it != knownAdapters.end())
+                adapterinfo2 += " -" + it->second;
             outputRow(ofs, "Detected read2 adapter:", adapterinfo2);
         }
     }

@@ -9,13 +9,14 @@ ifeq ($(COVERAGE),1)
 endif
 
 SRCS := evaluator_tests.cpp \
-        ../src/evaluator.cpp \
-        ../src/nucleotidetree.cpp \
-        ../src/options.cpp \
-        ../src/fastareader.cpp \
-        ../src/read.cpp \
-        ../src/sequence.cpp \
-        stubs/fastqreader.cpp
+		../src/evaluator.cpp \
+		../src/nucleotidetree.cpp \
+		../src/options.cpp \
+		../src/fastareader.cpp \
+		../src/read.cpp \
+		../src/sequence.cpp \
+		../src/knownadapters.cpp \
+		stubs/fastqreader.cpp
 
 # Map sources to object files
 OBJS := $(patsubst ../src/%.cpp,build/src/%.o,$(SRCS))
