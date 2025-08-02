@@ -145,6 +145,17 @@ TEST(EvaluatorTests, IsTwoColorSystem) {
     EXPECT_FALSE(evalFalse.isTwoColorSystem());
 }
 
+// Ensures that isTwoColorSystem gracefully handles an empty FASTQ input
+TEST(EvaluatorTests, IsTwoColorSystemEmptyFile) {
+    vector<string> names;
+    vector<string> seqs;
+    auto           fastqEmpty = create_fastq(names, seqs);
+    Options        optEmpty;
+    optEmpty.in1 = fastqEmpty.path();
+    Evaluator evalEmpty(&optEmpty);
+    EXPECT_FALSE(evalEmpty.isTwoColorSystem());
+}
+
 TEST(EvaluatorTests, EvaluateSeqLenAndOverRepSeqs) {
     const int len1   = 12;
     const int len2   = 20;
