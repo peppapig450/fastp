@@ -1,6 +1,7 @@
 #include "evaluator.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <map>
 #include <memory>
 #include <unordered_map>
@@ -63,24 +64,20 @@ void Evaluator::evaluateSeqLen() {
 }
 
 int Evaluator::computeSeqLen(const std::string& filename) {
-    FastqReader reader(filename);
+    FastqReader           reader(filename);
+    constexpr std::size_t kRecordLimit = 1000;
+    int                   maxLen       = 0;
 
-    long records = 0;
-
-    // get seqlen
-    int seqlen=0;
-    while(records < 1000) {
-        Read* r = reader.read();
-        if(!r) {
+    for (std::size_t rec = 0; rec < kRecordLimit; ++rec) {
+        std::unique_ptr<Read> r {reader.read()};
+        if (r == nullptr) {
             break;
         }
-        int rlen = r->length();
-        seqlen = std::max(rlen, seqlen);
-        records++;
-        delete r;
+
+        maxLen = std::max(maxLen, static_cast<int>(r->length()));
     }
 
-    return seqlen;
+    return maxLen;
 }
 
 void Evaluator::computeOverRepSeq(const std::string& filename, std::unordered_map<string, long>& hotseqs, int seqlen) {
