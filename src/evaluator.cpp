@@ -185,10 +185,18 @@ void Evaluator::computeOverRepSeq(const std::string&                filename,
 }
 
 void Evaluator::evaluateOverRepSeqs() {
-    if(!mOptions->in1.empty())
-        computeOverRepSeq(mOptions->in1, mOptions->overRepSeqs1, mOptions->seqLen1);
-    if(!mOptions->in2.empty())
-        computeOverRepSeq(mOptions->in2, mOptions->overRepSeqs2, mOptions->seqLen2);
+    auto& opts = *mOptions;
+
+    const auto& in1 = opts.in1;
+    const auto& in2 = opts.in2;
+
+    if (!in1.empty()) {
+        computeOverRepSeq(in1, opts.overRepSeqs1, opts.seqLen1);
+    }
+
+    if (!in2.empty()) {
+        computeOverRepSeq(in2, opts.overRepSeqs2, opts.seqLen2);
+    }
 }
 
 void Evaluator::evaluateReadNum(long& readNum) {
