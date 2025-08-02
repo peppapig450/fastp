@@ -23,6 +23,7 @@ public:
 
     Read* read();
     void getBytes(size_t& bytesRead, size_t& bytesTotal);
+    std::size_t getFileSize() const noexcept;
     bool eof();
     bool hasNoLineBreakAtEnd();
     void setReadPool(ReadPool* rp);
@@ -33,7 +34,7 @@ public:
 private:
     std::ifstream mIn;
     size_t mBytesRead;
-    size_t mTotalSize;
+    size_t mFileSize;
 
     // Fields used when simulating a large dataset
     bool  mSimulateLarge;

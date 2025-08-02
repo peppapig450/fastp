@@ -41,6 +41,7 @@ public:
 	bool isZipped();
 
 	void getBytes(size_t& bytesRead, size_t& bytesTotal);
+	auto getFileSize() const noexcept -> std::size_t { return mFileSize; }
 
 	//this function is not thread-safe
 	//do not call read() of a same FastqReader object from different threads concurrently
@@ -83,6 +84,7 @@ private:
 	bool mHasQuality;
 	bool mPhred64;
     ReadPool* mReadPool;
+	std::size_t mFileSize;
 
 };
 

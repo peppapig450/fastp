@@ -62,15 +62,8 @@ inline char complement(char base) {
     }
 }
 
-inline bool starts_with( string const & value,  string const & starting)
-{
-    if (starting.size() > value.size()) return false;
-    return  equal(starting.begin(), starting.end(), value.begin());
-}
-
-inline bool starts_with( string* value,  string const & starting)
-{
-    return starts_with(*value, starting);
+inline bool starts_with(const std::string& value, const std::string& prefix) {
+    return value.size() >= prefix.size() && std::equal(prefix.begin(), prefix.end(), value.begin());
 }
 
 inline bool ends_with( string const & value,  string const & ending)

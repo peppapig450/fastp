@@ -26,13 +26,38 @@ SOFTWARE.
 #include "read.h"
 #include "util.h"
 #include <string.h>
+#include <sys/stat.h>
 #include <cassert>
+#include <cstddef>
 #include <memory>
 #include <utility>
 
 #define FQ_BUF_SIZE (1<<23)
 #define IGZIP_IN_BUF_SIZE (1<<22)
 #define GZIP_HEADER_BYTES_REQ (1<<16)
+
+namespace {
+
+// Return file size or 0 on failure/stdin (and other special files)
+inline auto stat_file_size(const std::string& filename) -> std::size_t {
+	// never try to stat the std-in/out/err pseudo-files
+	if (starts_with(filename, "/dev/std")) {
+		return 0;
+	}
+
+	struct stat fileStatus {};
+	if (stat(filename.c_str(), &fileStatus) != 0) {
+		return 0;
+	}
+
+	// only report a size for regular files
+	if (!S_ISREG(fileStatus.st_mode)) {
+		return 0;
+	}
+
+	return static_cast<std::size_t>(fileStatus.st_size);
+}
+}
 
 FastqReader::FastqReader(string filename, bool hasQuality, bool phred64){
 	mFilename = filename;
@@ -53,6 +78,7 @@ FastqReader::FastqReader(string filename, bool hasQuality, bool phred64){
 	mHasNoLineBreakAtEnd = false;
 	mGzipInputUsedBytes = 0;
 	mReadPool = NULL;
+	mFileSize = stat_file_size(filename);
 	init();
 }
 
@@ -196,10 +222,8 @@ void FastqReader::getBytes(size_t& bytesRead, size_t& bytesTotal) {
 	} else {
 		bytesRead = ftell(mFile);//mFile.tellg();
 	}
-	// use another ifstream to not affect current reader
-	ifstream is(mFilename);
-	is.seekg (0, is.end);
-	bytesTotal = is.tellg();
+
+	bytesTotal = mFileSize;
 }
 
 void FastqReader::clearLineBreaks(char* line) {
@@ -331,26 +355,26 @@ Read* FastqReader::read(){
 		return nullptr;
 	}
 
-    Read* readInPool = nullptr;
-    if (mReadPool != nullptr) {
-        readInPool = mReadPool->getOne();
-    }
+	Read* readInPool = nullptr;
+	if (mReadPool != nullptr) {
+		readInPool = mReadPool->getOne();
+	}
 
-    if (readInPool != nullptr) {
-        // Update the pooled read's contents
-        *readInPool = Read(std::move(name),
-                           std::move(sequence),
-                           std::move(strand),
-                           std::move(quality),
-                           mPhred64);
-        return readInPool;
-    }
+	if (readInPool != nullptr) {
+		// Update the pooled read's contents
+		*readInPool = Read(std::move(name),
+						   std::move(sequence),
+						   std::move(strand),
+						   std::move(quality),
+						   mPhred64);
+		return readInPool;
+	}
 
-    return new Read(std::move(name),
-                    std::move(sequence),
-                    std::move(strand),
-                    std::move(quality),
-                    mPhred64);
+	return new Read(std::move(name),
+					std::move(sequence),
+					std::move(strand),
+					std::move(quality),
+					mPhred64);
 }
 
 void FastqReader::close(){
@@ -397,7 +421,7 @@ bool FastqReader::test(){
 	while(true){
 		i++;
 		std::unique_ptr<Read> r1(reader1.read());
-        std::unique_ptr<Read> r2(reader2.read());
+		std::unique_ptr<Read> r2(reader2.read());
 		if(r1 == nullptr || r2 == nullptr) {
 			break;
 		}

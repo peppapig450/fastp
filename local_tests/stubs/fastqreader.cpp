@@ -7,7 +7,7 @@
 #include <string>
 
 FastqReader::FastqReader(std::string filename, bool hasQuality, bool phred64)
-    : mIn(), mBytesRead(0), mTotalSize(0), mSimulateLarge(false),
+    : mIn(), mBytesRead(0), mFileSize(0), mSimulateLarge(false),
       mTotalReads(0), mGenerated(0), mReadLen(0), mBytesPerRead(0) {
     if (filename == MOCK_LARGE_DATASET) {
         mSimulateLarge = true;
@@ -19,11 +19,11 @@ FastqReader::FastqReader(std::string filename, bool hasQuality, bool phred64)
         mBytesPerRead = name.size() + 1 + seq.size() + 1 + plus.size() + 1 +
                         qual.size() + 1;
         mTotalReads = 1024 * 1024;        // 1M reads, exceeds READ_LIMIT
-        mTotalSize = mTotalReads * mBytesPerRead;
+        mFileSize = mTotalReads * mBytesPerRead;
     } else {
         mIn.open(filename);
         mIn.seekg(0, std::ios::end);
-        mTotalSize = static_cast<size_t>(mIn.tellg());
+        mFileSize = static_cast<size_t>(mIn.tellg());
         mIn.seekg(0);
     }
 }
@@ -53,7 +53,11 @@ Read* FastqReader::read() {
 
 void FastqReader::getBytes(size_t& bytesRead, size_t& bytesTotal) {
     bytesRead = mBytesRead;
-    bytesTotal = mTotalSize;
+    bytesTotal = mFileSize;
+}
+
+std::size_t FastqReader::getFileSize() const noexcept {
+    return mFileSize;
 }
 
 bool FastqReader::eof() {
