@@ -350,6 +350,34 @@ TEST(EvaluatorTests, EvalAdapterAndReadNumSkipsHighGCSeeds) {
                 numReads * 0.05);
 }
 
+
+TEST(EvaluatorTests, EvalAdapterAndReadNumSkipsGGGGPrefix) {
+    const int    numReads = 10000;
+    const string seed     = "GGGGATCGAT";
+    vector<string> names;
+    vector<string> seqs;
+    std::mt19937 rng(1);
+    std::uniform_int_distribution<int> dist(0, 1);
+    for (int i = 0; i < numReads; ++i) {
+        string prefix(20, 'A');
+        string suffix(70, 'A');
+        for (char& c : prefix) c = dist(rng) ? 'A' : 'T';
+        for (char& c : suffix) c = dist(rng) ? 'A' : 'T';
+        names.push_back("@r" + std::to_string(i));
+        seqs.push_back(prefix + seed + suffix);
+    }
+    auto    fastq = create_fastq(names, seqs);
+    Options opt;
+    opt.in1 = fastq.path();
+    Evaluator eval(&opt);
+    long   readNum = 0;
+    string detected = eval.evalAdapterAndReadNum(readNum, false);
+    EXPECT_EQ("", detected);
+    EXPECT_NEAR(static_cast<double>(numReads), static_cast<double>(readNum),
+                numReads * 0.05);
+}
+
+
 TEST(EvaluatorTests, GetAdapterWithSeedReconstructsAdapter) {
     const string adapter = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA";
     vector<string> names;
