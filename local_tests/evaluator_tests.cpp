@@ -13,7 +13,7 @@
 #undef private
 #include "adapter_reads.h"
 #include "fastqreader.h"
-#include "scoped_fastq.h"
+#include "scoped_fastq.hpp"
 #include "options.h"
 
 using std::string;
@@ -342,4 +342,50 @@ TEST(EvaluatorTests, GetAdapterWithSeedReconstructsAdapter) {
     int        seed   = eval.seq2int(adapter, 0, keylen, -1);
     string     got    = eval.getAdapterWithSeed(seed, reads, keylen);
     EXPECT_EQ(adapter, got);
+}
+
+TEST(EvaluatorTests, GetAdapterWithSeedUnknownAdapter) {
+    const string adapter = "TGCATGACCTGACGTCAGTCTGACCATGACCTA";
+    vector<string> names;
+    vector<string> seqs;
+    const int numReads = 200;
+    generate_reads_with_adapter(numReads, adapter, names, seqs);
+    for (auto& s : seqs) {
+        s = string(20, 'N') + adapter + "A";
+    }
+
+    vector<unique_ptr<Read>> reads;
+    reads.reserve(numReads);
+    for (int i = 0; i < numReads; ++i) {
+        reads.emplace_back(std::make_unique<Read>(names[i], seqs[i]));
+    }
+
+    Options   opt;
+    Evaluator eval(&opt);
+    const int keylen  = 10;
+    const int seedPos = 10;
+    int       seed    = eval.seq2int(adapter, seedPos, keylen, -1);
+    string    got     = eval.getAdapterWithSeed(seed, reads, keylen);
+    EXPECT_EQ(adapter, got);
+}
+
+TEST(EvaluatorTests, GetAdapterWithSeedNoDominantPath) {
+    const string seedSeq = "ACGTACGTAC";
+    vector<string> names;
+    vector<string> seqs;
+    const int numReads = 200;
+    generate_reads_with_adapter(numReads, seedSeq, names, seqs);
+
+    vector<unique_ptr<Read>> reads;
+    reads.reserve(numReads);
+    for (int i = 0; i < numReads; ++i) {
+        reads.emplace_back(std::make_unique<Read>(names[i], seqs[i]));
+    }
+
+    Options   opt;
+    Evaluator eval(&opt);
+    const int keylen = 10;
+    int       seed   = eval.seq2int(seedSeq, 0, keylen, -1);
+    string    got    = eval.getAdapterWithSeed(seed, reads, keylen);
+    EXPECT_EQ("", got);
 }
