@@ -1,10 +1,12 @@
 #include "evaluator.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstddef>
 #include <map>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -80,89 +82,100 @@ int Evaluator::computeSeqLen(const std::string& filename) {
     return maxLen;
 }
 
-void Evaluator::computeOverRepSeq(const std::string& filename, std::unordered_map<string, long>& hotseqs, int seqlen) {
+// TODO: This should be split up into multiple functions as it is essentially 3 independent operations
+void Evaluator::computeOverRepSeq(const std::string&                filename,
+                                  std::unordered_map<string, long>& hotseqs,
+                                  int                               seqlen) {
+    constexpr std::int64_t   kBaseLimit = 151LL * 10000LL;  // 1.51 M bases ≈ 10 k 150 bp reads
+    const std::array<int, 5> kSteps {{10, 20, 40, 100, std::min(150, seqlen - 2)}};
+
     FastqReader reader(filename);
 
-    std::unordered_map<string, long> seqCounts;
+    // We reserve a decent-sized bucket count to reduce re-hashing during counting
+    std::unordered_map<std::string, long> seqCounts;
+    // TODO: this is a heuristic and should be tuned to sample size, since sample sizes can vary we
+    // should probably do this at runtime, maybe using the getBytes method
+    seqCounts.reserve(500000);
 
-    const long BASE_LIMIT = 151 * 10000;
-    long records = 0;
-    long bases = 0;
+    int basesSeen = 0;
 
-    while(bases < BASE_LIMIT) {
-        Read* r = reader.read();
-        if(!r) {
+    // First pass we count k-mers
+    while (basesSeen < kBaseLimit) {
+        std::unique_ptr<Read> read(reader.read());
+        if (read == nullptr) {
             break;
         }
-        int rlen = r->length();
-        bases += rlen;
-        records ++;
-        // 10, 20, 40, 80, 150
 
-        int steps[5] = {10, 20, 40, 100, min(150,seqlen-2)};
-        
-        for(int s=0; s<5; s++) {
-            int step = steps[s];
-            for(int i=0; i<rlen-step; i++) {
-                std::string seq = r->seq().substr(i, step);
-                if(seqCounts.count(seq)>0)
-                    seqCounts[seq]++;
-                else
-                    seqCounts[seq]=1;
-            }
-        }
+        const auto& seq     = read->seq();
+        const int   readLen = static_cast<int>(seq.size());
+        basesSeen += readLen;
 
-        delete r;
-    }
-    
-    std::unordered_map<std::string, long>::iterator iter;
-    for(iter = seqCounts.begin(); iter!=seqCounts.end(); iter++) {
-        std::string seq = iter->first;
-        long count = iter->second;
+        for (int step : kSteps) {
+            if (readLen <= step) {
+                continue;  // too short for this k
+            }
 
-        if(seq.length() >= seqlen-1) {
-            if(count >= 3) {
-                hotseqs[seq]=count;
-            }
-        } else if(seq.length() >= 100) {
-            if(count >= 5) {
-                hotseqs[seq]=count;
-            }
-        } else if(seq.length() >= 40) {
-            if(count >= 20) {
-                hotseqs[seq]=count;
-            }
-        } else if(seq.length() >= 20) {
-            if(count >= 100) {
-                hotseqs[seq]=count;
-            }
-        } else if(seq.length() >= 10) {
-            if(count >= 500) {
-                hotseqs[seq]=count;
+            for (int i = 0; i + step <= readLen; ++i) {
+                // operator[] avoids double lookup
+                seqCounts[seq.substr(i, step)]++;
             }
         }
     }
+
+    // Apply length based thresholds
+    const auto minCount = [seqlen](int len) -> int {
+        return (len >= seqlen - 1) ? 3
+               : (len >= 100)      ? 5
+               : (len >= 40)       ? 20
+               : (len >= 20)       ? 100
+                                   : 500;  // len >= 10
+    };
+
+    // because unordered_map uses const's internally, and extract doesn't exist yet (C++17),
+    // this is going to always copy the string
+    for (const auto& kv : seqCounts) {
+        if (kv.second >= minCount(static_cast<int>(kv.first.size()))) {
+            hotseqs.emplace(kv);
+        }
+    }
+
+    // Since C++11 does not allow us to use auto in lambda parameters, we use a type alias to avoid
+    // typing out the type signature everytime
+    using PtrCountPair = std::pair<const std::string*, long>;
+
+    // we use pointers here to string so that we avoid copying string objects directly,
+    // we can manipulate/move the original string.
+    std::vector<PtrCountPair> sorted;
+    sorted.reserve(hotseqs.size());
+    for (auto& kv : hotseqs) {
+        // Take a pointer to the string key
+        sorted.emplace_back(&kv.first, kv.second);
+    }
+
+    std::sort(sorted.begin(), sorted.end(), [](const PtrCountPair& a, const PtrCountPair& b) {
+        return a.first->size() > b.first->size();
+    });
 
     // remove substrings
-    std::unordered_map<std::string, long>::iterator iter2;
-    iter = hotseqs.begin(); 
-    while(iter!=hotseqs.end()) {
-        std::string seq = iter->first;
-        long count = iter->second;
-        bool isSubString = false;
-        for(iter2 = hotseqs.begin(); iter2!=hotseqs.end(); iter2++) {
-            std::string seq2 = iter2->first;
-            long count2 = iter2->second;
-            if(seq != seq2 && seq2.find(seq) != std::string::npos && count / count2 < 10) {
-                isSubString = true;
-                break;
+    std::unordered_set<std::string> toErase;
+    for (std::size_t i = 0; i < sorted.size(); ++i) {
+        const auto&        longerPair  = sorted[i];
+        const std::string& longer      = *longerPair.first;
+        long               longerCount = longerPair.second;
+
+        for (std::size_t j = i + 1; j < sorted.size(); ++j) {
+            const auto&        shorterPair  = sorted[j];
+            const std::string& shorter      = *shorterPair.first;
+            long               shorterCount = shorterPair.second;
+
+            if (longer.find(shorter) != std::string::npos && shorterCount < longerCount * 10) {
+                toErase.insert(shorter);
             }
         }
-        if(isSubString) {
-            hotseqs.erase(iter++);
-        } else {
-            iter++;
-        }
+    }
+
+    for (const auto& seq : toErase) {
+        hotseqs.erase(seq);
     }
 
     // output for test
