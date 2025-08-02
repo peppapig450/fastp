@@ -389,3 +389,26 @@ TEST(EvaluatorTests, GetAdapterWithSeedNoDominantPath) {
     string    got    = eval.getAdapterWithSeed(seed, reads, keylen);
     EXPECT_EQ("", got);
 }
+
+TEST(EvaluatorTests, EvalAdapterAndReadNumDetectsUnknownAdapter) {
+    const string adapter = "TTACGCGTTACGAGTCTACGTGATCGTAGCTA";
+    const int    numReads = 15000;
+    vector<string> names;
+    vector<string> seqs;
+    names.reserve(numReads);
+    seqs.reserve(numReads);
+    for (int i = 0; i < numReads; ++i) {
+        names.push_back("@r" + std::to_string(i));
+        seqs.push_back(adapter + "A");
+    }
+
+    auto fastq = create_fastq(names, seqs);
+    Options opt;
+    opt.in1 = fastq.path();
+    Evaluator eval(&opt);
+    long      readNum = 0;
+    string    detected = eval.evalAdapterAndReadNum(readNum, false);
+    EXPECT_EQ(adapter, detected);
+    EXPECT_NEAR(static_cast<double>(numReads), static_cast<double>(readNum),
+                numReads * 0.05);
+}
