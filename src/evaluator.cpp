@@ -51,10 +51,15 @@ bool Evaluator::isTwoColorSystem() {
 }
 
 void Evaluator::evaluateSeqLen() {
-    if(!mOptions->in1.empty())
-        mOptions->seqLen1 = computeSeqLen(mOptions->in1);
-    if(!mOptions->in2.empty())
-        mOptions->seqLen2 = computeSeqLen(mOptions->in2);
+    const auto& in1 = mOptions->in1;
+    const auto& in2 = mOptions->in2;
+
+    if (!in1.empty()) {
+        mOptions->seqLen1 = computeSeqLen(in1);
+    }
+    if (!in2.empty()) {
+        mOptions->seqLen2 = computeSeqLen(in2);
+    }
 }
 
 int Evaluator::computeSeqLen(const std::string& filename) {
