@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <memory>
+#include <numeric>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -378,159 +380,205 @@ std::string Evaluator::checkKnownAdapters(const std::vector<std::unique_ptr<Read
     return {};
 }
 
+// TODO: a lot of this logics is duplicated from elsewhere in the file, and it needs to be split up as well
 std::string Evaluator::evalAdapterAndReadNum(long& readNum, bool isR2) {
-    std::string filename = mOptions->in1;
-    if(isR2)
-        filename = mOptions->in2;
-    FastqReader reader(filename);
-    // stat up to 256K reads
-    const long READ_LIMIT = 256*1024;
-    const long BASE_LIMIT = 151 * READ_LIMIT;
-    long records = 0;
-    long bases = 0;
-    std::size_t firstReadPos = 0;
+    constexpr std::size_t kReadLimit      = 256ULL * 1024ULL;  // 256k reads
+    // Same cap in bases (~= readLimit * 151bp)
+    constexpr std::size_t kBaseLimit      = 151ULL * kReadLimit;
+    constexpr int         kKeyLen         = 10;  // k-mer length used for adapter seed
+    constexpr std::size_t kKeySpace       = 1ULL << (kKeyLen * 2ULL);  // 4^kKeyLen possible k-mers
+    constexpr int         kTopCandidates  = 10;                        // keep top-N enriched k-mers
+    constexpr int         kFoldThreshold  = 20;     // enrichment fold for candidate selection
+    constexpr int         kMinRecordsEval = 10000;  // need at least 10k reads to continue
+    // TODO: this is duplicated, move it to anon namesapce
+    constexpr double kSafetyFactor        = 1.01;  // +1% head-room when extrapolating
 
-    std::size_t bytesRead;
-    std::size_t bytesTotal;
+    const auto& filename = isR2 ? mOptions->in2 : mOptions->in1;
+    FastqReader reader {filename};
 
-    std::vector<std::unique_ptr<Read>> loadedReads;
-    loadedReads.reserve(READ_LIMIT);
-    bool reachedEOF = false;
-    bool first = true;
+    std::vector<std::unique_ptr<Read>> reads;
+    reads.reserve(kReadLimit);
 
-    while(records < READ_LIMIT && bases < BASE_LIMIT) {
-        std::unique_ptr<Read> r{reader.read()}; // TODO: make reader return unique_ptr directly
-        if(!r) {
+    std::size_t bytesRead      = 0;
+    std::size_t bytesTotal     = 0;
+    std::size_t firstRecOffset = 0;
+
+    std::size_t sampledBases = 0;
+    bool        reachedEOF   = false;
+
+    while (reads.size() < kReadLimit && sampledBases < kBaseLimit) {
+        std::unique_ptr<Read> rec {reader.read()};
+
+        if (rec == nullptr) {
             reachedEOF = true;
             break;
         }
-        if(first) {
+
+        // mark the start of the first record so that we can estimate bytes/read
+        if (reads.empty()) {
             reader.getBytes(bytesRead, bytesTotal);
-            firstReadPos = bytesRead;
-            first = false;
+            firstRecOffset = bytesRead;
         }
-        int rlen = r->length();
-        bases += rlen;
-        loadedReads.emplace_back(std::move(r));
-        records++;
+
+        sampledBases += rec->length();
+        reads.emplace_back(std::move(rec));
     }
-    loadedReads.shrink_to_fit();
 
     readNum = 0;
-    if(reachedEOF){
-        readNum = records;
-    } else if(records>0) {
-        // by the way, update readNum so we don't need to evaluate it if splitting output is enabled
+    if (reachedEOF) {
+        readNum = static_cast<long>(reads.size());
+    } else if (!reads.empty()) {
+        // update readNum so we avoid having to re-evaluate if splitting output is enabled
         reader.getBytes(bytesRead, bytesTotal);
-        double bytesPerRead = (double)(bytesRead - firstReadPos) / (double) records;
-        // increase it by 1% since the evaluation is usually a bit lower due to bad quality causes lower compression rate
-        readNum = (long) (bytesTotal*1.01 / bytesPerRead);
+        const double bytesPerRead =
+            static_cast<double>(bytesRead - firstRecOffset) / static_cast<double>(reads.size());
+        // We use a 1% safety limit to account for under-evaluation due to potential bad quality
+        readNum = static_cast<long>(static_cast<double>(bytesTotal) * kSafetyFactor / bytesPerRead);
     }
 
-    // we need at least 10000 valid records to evaluate
-    if(records < 10000) {
-        return "";
+    // Early exit, returning empty string if there is not enough data to evaluate reliably
+    if (reads.size() < kMinRecordsEval) {
+        return {};
     }
 
-    // TODO: probably want to pass by reference to mutate in place and avoid copying
-    std::string knownAdapter = checkKnownAdapters(loadedReads);
-     if(knownAdapter.size() > 8) {
-        return knownAdapter;
+    // Try to match against the known adapter list
+    auto known = checkKnownAdapters(reads);
+    if (known.length() > 8) {
+        return known;
     }
 
-    // we have to shift last cycle for evaluation since it is so noisy, especially for Illumina data
+    // Shift last cycle(s) to avoid noisy, low-quality tail bases (esp. in Illumina); uses
+    // trim.tail1
     const std::size_t shiftTail = std::max<std::size_t>(1, mOptions->trim.tail1);
 
-    // why we add trim_tail here? since the last cycle are usually with low quality and should be trimmed
-    const int keylen = 10;
-    const std::size_t size = 1U << (static_cast<std::size_t>(keylen) * 2);
-    std::vector<unsigned int> counts(size, 0);
+    std::vector<unsigned int> kmerCounts(kKeySpace, 0);
 
-    for (const auto& r : loadedReads) {
-        int key = -1;
-        const std::size_t limit = r->length() - static_cast<std::size_t>(keylen) - shiftTail;
-        for(std::size_t pos = 20; pos <= limit; pos++) {
-            key = seq2int(r->seq(), static_cast<int>(pos), static_cast<int>(keylen), key);
-            if(key >= 0) {
-                counts[key]++;
+    for (const auto& rec : reads) {
+        const std::string& seq = rec->seq();
+        if (seq.length() < 20 + shiftTail + kKeyLen) {
+            continue;  // read too short for k-mer scan
+        }
+
+        const std::size_t limit      = seq.length() - shiftTail - kKeyLen;
+        int               rollingKey = -1;
+        for (std::size_t pos = 20; pos <= limit; ++pos) {
+            rollingKey = seq2int(seq, static_cast<int>(pos), kKeyLen, rollingKey);
+            if (rollingKey >= 0) {
+                ++kmerCounts[static_cast<std::size_t>(rollingKey)];
             }
         }
     }
 
-    // set AAAAAAAAAA = 0;
-    counts[0] = 0;
+    // Ignore poly‑A (AAAAAAAAAA)
+    kmerCounts[0] = 0;
 
-    // get the top N
-    const int topnum = 10;
-    int topkeys[topnum] = {0};
-    long total = 0;
-    for(int k=0; k<size; k++) {
-        int atcg[4] = {0};
-        for(int i=0; i<keylen; i++) {
-            int baseOfBit = (k >> (i*2)) & 0x03;
-            atcg[baseOfBit]++;
+    // Complexity filter
+    const auto isLowComplexity = [=](int key) noexcept {
+        assert(key >= 0);
+
+        std::array<int, 4> baseCnt = {{0, 0, 0, 0}};
+        const auto         ukey    = static_cast<unsigned int>(key);
+
+        for (std::size_t i = 0; i < static_cast<std::size_t>(kKeyLen); ++i) {
+            ++baseCnt[(ukey >> (i * 2U)) & 0x3U];
         }
-        bool lowComplexity = false;
-        for(int b=0; b<4; b++) {
-            if(atcg[b] >= keylen-4)
-                lowComplexity=true;
+
+        for (int base : baseCnt) {
+            // >= k-4 identical bases
+            if (base >= kKeyLen - 4) {
+                return true;
+            }
         }
-        if(lowComplexity)
-            continue;
-        // too many GC
-        if(atcg[2] + atcg[3] >= keylen-2)
-            continue;
 
-        // starts with GGGG
-        if( k>>12 == 0xff)
-            continue;
+        // Too GC-rich or starts with 4xG (GGGG...)
+        return (baseCnt[2U] + baseCnt[3U] >= kKeyLen - 2) || ((ukey >> 12U) == 0xFFU);
+    };
 
-        unsigned int val = counts[k];
-        total += val;
-        for(int t=topnum-1; t>=0; t--) {
-            // reach the middle
-            if(val < counts[topkeys[t]]){
-                if(t<topnum-1) {
-                    for(int m=topnum-1; m>t+1; m--) {
-                        topkeys[m] = topkeys[m-1];
+    // Collect top-N enriched non-trivial k-mers
+    struct Candidate {
+        int          key   = 0;
+        unsigned int count = 0;
+
+        Candidate() = default;
+        explicit Candidate(int key_, unsigned int count_)
+            : key(key_)
+            , count(count_) {}
+    };
+
+    std::array<Candidate, kTopCandidates> top {};
+
+    std::uint64_t totalCounts = 0;
+    for (std::size_t k = 0; k < kKeySpace; ++k) {
+        unsigned int count = kmerCounts[k];
+        // We skip trivial k-mers
+        if (count == 0 || isLowComplexity(static_cast<int>(k))) {
+            continue;
+        }
+        totalCounts += count;
+
+        // Insert into descending-ordered fixed-size array
+        for (int i = kTopCandidates - 1; i >= 0; --i) {
+            if (count < top[i].count) {
+                // Found where count should go, insert at position+1
+                if (i < kTopCandidates - 1) {
+                    // Shift elements to make room
+                    for (int m = kTopCandidates - 1; m > i + 1; --m) {
+                        top[m] = top[m - 1];
                     }
-                    topkeys[t+1] = k;
+                    top[i + 1] = Candidate {static_cast<int>(k), count};
                 }
                 break;
-            } else if(t == 0) { // reach the top
-                for(int m=topnum-1; m>t; m--) {
-                    topkeys[m] = topkeys[m-1];
+            }
+
+            if (i == 0) {
+                // count >= all elements, insert at the top
+                for (int m = kTopCandidates - 1; m > 0; --m) {
+                    top[m] = top[m - 1];
                 }
-                topkeys[t] = k;
+                top[0] = Candidate {static_cast<int>(k), count};
             }
         }
     }
 
-    const int FOLD_THRESHOLD = 20;
-    for(int t=0; t<topnum; t++) {
-        int key = topkeys[t];
-        std::string seq = int2seq(key, keylen);
-        if(key == 0)
-            continue;
-        long count = counts[key];
-        if(count<10 || count*size < total * FOLD_THRESHOLD)
-            break;
-        // skip low complexity seq
-        int diff = 0;
-        for(int s=0; s<seq.length() - 1; s++) {
-            if(seq[s] != seq[s+1])
-                diff++;
-        }
-        if(diff <3){
+    // Build adapter around each seed
+    for (const auto& cand : top) {
+        // If the array is prefilled with zeros, we skip entries
+        if (cand.key == 0) {
             continue;
         }
-        std::string adapter = getAdapterWithSeed(key, loadedReads, keylen);
-        if(!adapter.empty()){
-            return adapter;
+
+        // NOTE: We name this cnt for now to avoid shadowing, this should be moved to another
+        // function
+        const std::int64_t cnt = cand.count;
+        // Check if the candidate is enriched enough, if not we stop looking at smaller ones
+        if (cnt < 10
+            || cnt * static_cast<std::int64_t>(kKeySpace)
+                   < static_cast<std::int64_t>(totalCounts)
+                         * static_cast<std::int64_t>(kFoldThreshold)) {
+            break;  // not enriched enough
+        }
+
+        // NOTE: This copy might be expensive depending on how much this is ran
+        const std::string seedSeq = int2seq(static_cast<unsigned int>(cand.key), kKeyLen);
+
+        // Reject seeds with <3 base transitions (low complexity)
+        int transitions = std::inner_product(seedSeq.begin(),
+                                             seedSeq.end() - 1,
+                                             seedSeq.begin() + 1,
+                                             0,
+                                             std::plus<int>(),
+                                             std::not_equal_to<char>());
+        if (transitions < 3) {
+            continue;
+        }
+
+        const auto adapter = getAdapterWithSeed(cand.key, reads, kKeyLen);
+        if (!adapter.empty()) {
+            return adapter;  // Success, de-novo adapter inferred
         }
     }
 
-    return "";
+    return {};  // No adapter found
 }
 
 std::string Evaluator::getAdapterWithSeed(int seed, const std::vector<std::unique_ptr<Read>>& loadedReads, int keylen) {
