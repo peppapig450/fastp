@@ -679,54 +679,72 @@ auto Evaluator::int2seq(std::uint32_t val, int seqlen) const -> std::string {
     return result;
 }
 
+/*
+ * Converts a DNA substing (A/T/C/G) to a packed 2-bit integer representation
+ *
+ * If `lastVal` >= 0, performs a rolling hash by reusing the previous k-mer value
+ * and shifting in one new base. Otherwise, computes the hash from scratch.
+ *
+ * Each base is encoded as:
+ *   A/a -> 00, T/t -> 01, C/c -> 10, G/g -> 11
+ *
+ * Returns -1 if any character is not a valid base (e.g., 'N').
+ */
 auto Evaluator::seq2int(const std::string& seq, int pos, int keylen, int lastVal) const -> int {
+    constexpr int kInvalid = -1;
+
+    // Map ASCII characters to their 2-bit base encoding, this lookup table keeps the inner loop
+    // branch-free and case-insensitive
+    static const std::array<int, 256> kBaseToBits = [kInvalid] {
+        std::array<int, 256> table {};
+
+        table.fill(kInvalid);
+        // clang-format off
+        table['A'] = table['a'] = 0;
+        table['T'] = table['t'] = 1;
+        table['C'] = table['c'] = 2;
+        table['G'] = table['g'] = 3;
+        // clang-format on
+
+        return table;
+    }();
+
+    const auto decode_base = [&](char base) noexcept -> int {
+        return kBaseToBits[static_cast<unsigned char>(base)];
+    };
+
+    // Perform a rolling update reusing the previous value
     if (lastVal >= 0) {
-        const int mask = (1 << (keylen*2 )) - 1;
-        int key = (lastVal<<2) & mask;
-        char base = seq[pos + keylen - 1];
-        switch (base) {
-            case 'A':
-                key += 0;
-                break;
-            case 'T':
-                key += 1;
-                break;
-            case 'C':
-                key += 2;
-                break;
-            case 'G':
-                key += 3;
-                break;
-            default:
-                // N or anything else
-                return -1;
+        // Create a mask to retain only the lowest 2 * keylen bits
+        const std::uint32_t bitmask = (1U << (static_cast<std::uint32_t>(keylen) * 2U)) - 1U;
+
+        // Shift previous value left by 2 bits, which drops the oldest base and apply the mask
+        std::uint32_t newKey = (static_cast<std::uint32_t>(lastVal) << 2U) & bitmask;
+
+        // Decode any new incoming base at the end of the k-mer window
+        const auto baseBits =
+            decode_base(seq[pos + keylen - 1]);  // TODO: These should probably be std::size_t
+        if (baseBits == kInvalid) {
+            return kInvalid;
         }
-        return key;
-    } else {
-        int key = 0;
-        for(int i=pos; i<keylen+pos; i++) {
-            key = (key << 2);
-            char base = seq[i];
-            switch (base) {
-                case 'A':
-                    key += 0;
-                    break;
-                case 'T':
-                    key += 1;
-                    break;
-                case 'C':
-                    key += 2;
-                    break;
-                case 'G':
-                    key += 3;
-                    break;
-                default:
-                    // N or anything else
-                    return -1;
-            }
-        }
-        return key;
+
+        // Add the new base to the right end of the key
+        return static_cast<int>(newKey | static_cast<std::uint32_t>(baseBits));
     }
+
+    // Compute a new fresh hash from scratch
+    std::uint32_t key = 0;
+    for (int i = 0; i < keylen; ++i) {
+        const auto baseBits = decode_base(seq[pos + i]);
+        if (baseBits == kInvalid) {
+            return kInvalid;
+        }
+
+        // Shift current key by 2 bits and add new base
+        key = (key << 2U) | static_cast<std::uint32_t>(baseBits);
+    }
+
+    return static_cast<int>(key);
 }
 
 EXCLUDE_FROM_COVERAGE
