@@ -642,7 +642,7 @@ std::string Evaluator::getAdapterWithSeed(int                                   
     }
 
     // Prefer a perfect match against the adapter list
-    auto matched = matchKnownAdapter(adapter);
+    auto matched = adapters::matchKnown(adapter);
     if (!matched.empty()) {
         const auto& known = adapters::getKnown();
         std::cerr << known.at(matched) << '\n' << matched << '\n';
@@ -656,26 +656,6 @@ std::string Evaluator::getAdapterWithSeed(int                                   
     }
 
     return {};
-}
-
-std::string Evaluator::matchKnownAdapter(const std::string& seq) {
-    const auto& knownAdapters = adapters::getKnown();
-    std::unordered_map<std::string, std::string>::const_iterator iter;
-    for(iter = knownAdapters.begin(); iter != knownAdapters.end(); iter++) {
-        std::string adapter = iter->first;
-        std::string desc = iter->second;
-        if(seq.length()<adapter.length()) {
-            continue;
-        }
-        int diff = 0;
-        for(int i=0; i<adapter.length() && i<seq.length(); i++) {
-            if(adapter[i] != seq[i])
-                diff++;
-        }
-        if(diff == 0)
-            return adapter;
-    }
-    return "";
 }
 
 auto Evaluator::int2seq(unsigned int val, int seqlen) const -> std::string {

@@ -262,4 +262,31 @@ auto getKnown() -> const AdapterMap& {
 
     return knownAdapters;
 }
+
+auto matchKnown(const std::string& seq) -> std::string {
+    // The minimum length of any adapter in the map
+    constexpr int kMinAdapterLength = 19;
+
+    // If the sequence is shorter than the minimum length, we early exit for performance
+    const auto seqLen = seq.length();
+    if (seqLen < kMinAdapterLength) {
+        return {};
+    }
+
+    const auto& knownAdapters = getKnown();
+    for (const auto& kv : knownAdapters) {
+        const auto& adapter = kv.first;
+
+        if (seqLen < adapter.size()) {
+            continue;
+        }
+
+        // Return the adapter if the sequence matches perfectly
+        if (seq.compare(0, adapter.length(), adapter) == 0) {
+            return adapter;
+        }
+    }
+
+    return {};
+}
 }  // namespace adapters

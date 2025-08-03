@@ -11,6 +11,7 @@
 #define private public
 #include "evaluator.h"
 #undef private
+#include "knownadapters.h"
 #include "adapter_reads.h"
 #include "fastqreader.h"
 #include "scoped_fastq.hpp"
@@ -86,8 +87,8 @@ TEST(EvaluatorTests, EvaluateReadNumUsesBytesPerRead) {
 
 TEST(EvaluatorTests, MatchKnownAdapter) {
     string adapter = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA";
-    EXPECT_EQ(adapter, Evaluator::matchKnownAdapter(adapter + "AAAA"));
-    EXPECT_EQ("", Evaluator::matchKnownAdapter("TTTTTTTTTT"));
+    EXPECT_EQ(adapter, adapters::matchKnown(adapter + "AAAA"));
+    EXPECT_EQ("", adapters::matchKnown("TTTTTTTTTT"));
 }
 
 TEST(EvaluatorTests, CheckKnownAdaptersPositive) {

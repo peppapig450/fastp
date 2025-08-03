@@ -30,7 +30,6 @@ public:
                                   std::unordered_map<std::string, long>& hotseqs,
                                   int                                    seqLen);
     static auto test() -> bool;
-    static auto matchKnownAdapter(const std::string& seq) -> std::string;
 
 private:
     auto int2seq(unsigned int val, int seqlen) const -> std::string;
