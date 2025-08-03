@@ -1,2 +1,4 @@
 *.fq
 evaluator_tests
+*.profdata
+*.profraw
