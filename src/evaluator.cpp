@@ -581,60 +581,81 @@ std::string Evaluator::evalAdapterAndReadNum(long& readNum, bool isR2) {
     return {};  // No adapter found
 }
 
-std::string Evaluator::getAdapterWithSeed(int seed, const std::vector<std::unique_ptr<Read>>& loadedReads, int keylen) {
-    // we have to shift last cycle for evaluation since it is so noisy, especially for Illumina data
-    const int shiftTail = max(1, mOptions->trim.tail1);
-    const int MAX_SEARCH_LENGTH = 500;
-    NucleotideTree forwardTree(mOptions);
-    // forward search
-    for(const auto& r : loadedReads) {
-        int key = -1;
-        const int limit = static_cast<int>(r->length()) - keylen - shiftTail;
-        const auto& seq = r->seq();
-        for(int pos = 20; pos <= limit && pos <MAX_SEARCH_LENGTH; pos++) {
-            key = seq2int(seq, pos, keylen, key);
-            if(key == seed) {
-                forwardTree.addSeq(seq.substr(pos+keylen, limit - pos));
+std::string Evaluator::getAdapterWithSeed(int                                       seed,
+                                          const std::vector<std::unique_ptr<Read>>& reads,
+                                          int                                       keylen) {
+    constexpr int kMinScanPos       = 20;   // skip low-quality head
+    constexpr int kMaxSearchLength  = 500;  // avoid wasting time deep in the read
+    constexpr int kMaxAdapterLength = 60;   // hard-cap on reported adapter
+    // We shift the last cycle for evaluation since Illumina data tends to be noisy
+    const int shiftTail             = std::max(1, mOptions->trim.tail1);
+
+    // Sequence after the seed
+    NucleotideTree forwardTree {mOptions};
+    // Sequence before the seed (reversed)
+    NucleotideTree backwardTree {mOptions};
+
+    const int keyShiftTotal = keylen + shiftTail;
+    for (const auto& rec : reads) {
+        const auto readLen = static_cast<int>(rec->length());
+        const int  limit   = readLen - keyShiftTotal;
+
+        // Skip if the read is too short to be useful
+        if (limit <= kMinScanPos) {
+            continue;
+        }
+
+        const std::string& seq        = rec->seq();
+        int                rollingKey = -1;  // reset rolling hash for this read
+
+        for (int pos = kMinScanPos; pos <= limit && pos < kMaxSearchLength; ++pos) {
+            rollingKey = seq2int(seq, pos, keylen, rollingKey);
+            if (rollingKey != seed) {
+                continue;
             }
+
+            const auto spos    = static_cast<std::size_t>(pos);
+            const auto skeylen = static_cast<std::size_t>(keylen);
+            const auto slimit  = static_cast<std::size_t>(limit);
+
+            // Forward context (suffix, same orientation)
+            forwardTree.addSeq(seq.substr(spos + skeylen, slimit - spos));
+
+            // backward context (prefix, reverse orientation)
+            backwardTree.addSeq(reverse(seq.substr(0, spos)));
         }
     }
-    bool reachedLeaf = true;
-    std::string forwardPath = forwardTree.getDominantPath(reachedLeaf);
 
-    NucleotideTree backwardTree(mOptions);
-    // backward search
-    for(const auto& r : loadedReads) {
-        int key = -1;
-        const int limit = static_cast<int>(r->length()) - keylen - shiftTail;
-        const auto& seq = r->seq();
-        for(int pos = 20; pos <= limit && pos <MAX_SEARCH_LENGTH; pos++) {
-            key = seq2int(seq, pos, keylen, key);
-            if(key == seed) {
-                std::string subseq =  seq.substr(0, pos);
-                std::string rcseq = reverse(subseq);
-                backwardTree.addSeq(rcseq);
-            }
-        }
+    // Build candidate adapter (5'-prefix + seed + 3'-suffix)
+    bool reachedLeafForward  = true;
+    bool reachedLeafBackward = true;
+
+    const std::string forwardPath  = forwardTree.getDominantPath(reachedLeafForward);
+    const std::string backwardPath = backwardTree.getDominantPath(reachedLeafBackward);
+
+    std::string adapter = reverse(backwardPath)    // re-orient prefix
+                          + int2seq(seed, keylen)  // seed itself
+                          + forwardPath;           // suffix
+
+    if (adapter.length() > kMaxSearchLength) {
+        adapter.resize(kMaxAdapterLength);
     }
-    std::string backwardPath = backwardTree.getDominantPath(reachedLeaf);
 
-    std::string adapter = reverse(backwardPath) + int2seq(seed, keylen) + forwardPath;
-    if(adapter.length()>60)
-        adapter.resize(60);
-
-    std::string matchedAdapter = matchKnownAdapter(adapter);
-    if(!matchedAdapter.empty()) {
-        const auto& knownAdapters = adapters::getKnown();
-        cerr << knownAdapters.at(matchedAdapter) << endl << matchedAdapter << endl;
-        return matchedAdapter;
-    } else {
-        if(reachedLeaf) {
-            cerr << adapter << endl;
-            return adapter;
-        } else {
-            return "";
-        }
+    // Prefer a perfect match against the adapter list
+    auto matched = matchKnownAdapter(adapter);
+    if (!matched.empty()) {
+        const auto& known = adapters::getKnown();
+        std::cerr << known.at(matched) << '\n' << matched << '\n';
+        return matched;
     }
+
+    // Otherwise return the de-novo adapter only if both paths were resolved
+    if (reachedLeafForward && reachedLeafBackward) {
+        std::cerr << adapter << '\n';
+        return adapter;
+    }
+
+    return {};
 }
 
 std::string Evaluator::matchKnownAdapter(const std::string& seq) {
