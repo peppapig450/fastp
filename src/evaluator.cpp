@@ -1,10 +1,9 @@
 #include "evaluator.h"
 
 #include <algorithm>
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
-#include <map>
 #include <memory>
 #include <numeric>
 #include <unordered_map>
