@@ -658,16 +658,25 @@ std::string Evaluator::getAdapterWithSeed(int                                   
     return {};
 }
 
-auto Evaluator::int2seq(unsigned int val, int seqlen) const -> std::string {
-    char bases[4] = {'A', 'T', 'C', 'G'};
-    std::string ret(seqlen, 'N');
-    int done = 0;
-    while(done < seqlen) {
-        ret[seqlen - done - 1] = bases[val & 0x03];
-        val = (val >> 2);
-        done++;
+auto Evaluator::int2seq(std::uint32_t val, int seqlen) const -> std::string {
+    // Mapping for 2-bit values to DNA bases:
+    // 00 -> 'A', 01 -> 'T', 10 -> 'C', 11 -> 'G'
+    static constexpr std::array<char, 4> kBases{{'A', 'T', 'C', 'G'}};
+
+    // Create a string with length `seqlen`, initialized with 'N' (unknown base)
+    std::string result(seqlen, 'N');
+
+    // Convert the integer to a sequence of DNA bases (2 bits per base)
+    for (int i = seqlen - 1; i >= 0; --i) {
+        // Extract the lowest 2 bits of `val` (mask with 0b11 = 0x3)
+        // These 2 bits represent one DNA base (since 2 bits can encode 4 values)
+        result[i] = kBases[val & 0x3U]; // TODO: if 0x3U is used elsewhere make it a file level constant
+    
+        // Shift `val` right by 2 bases to process the next base in the next iteration
+        val >>= 2;
     }
-    return ret;
+
+    return result;
 }
 
 auto Evaluator::seq2int(const std::string& seq, int pos, int keylen, int lastVal) const -> int {
