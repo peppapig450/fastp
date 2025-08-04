@@ -288,57 +288,16 @@ void Evaluator::evaluateOverRepSeqs() {
 }
 
 void Evaluator::evaluateReadNum(long& readNum) {
+    using namespace detail;
+
     // Limit reads to ~0.5 million records
     constexpr std::int64_t kReadLimit = 512LL * 1024;
     // Same cap in bases (NOTE: This assumes 150bp that may not be optimal,
     // but for consistency with the original code we keep it)
     constexpr std::int64_t kBaseLimit = 151LL * kReadLimit;
-    // +1% head room
-    constexpr double kSafetyFactor    = 1.01;
 
-    FastqReader reader {mOptions->in1};
-
-    std::size_t bytesRead      = 0;
-    std::size_t bytesTotal     = 0;
-    std::size_t firstRecOffset = 0;
-
-    std::int64_t sampledReads = 0;
-    std::int64_t sampledBases = 0;
-    bool         reachedEOF   = false;
-
-    while (sampledReads < kReadLimit && sampledBases < kBaseLimit) {
-        std::unique_ptr<Read> rec {reader.read()};
-        // If the returned pointer is null, there are no reads left so we mark EOF and break
-        if (rec == nullptr) {
-            reachedEOF = true;
-            break;
-        }
-
-        // After the very first read we get the entire file size
-        if (sampledReads == 0) {
-            reader.getBytes(bytesRead, bytesTotal);
-            firstRecOffset = bytesRead;
-        }
-
-        ++sampledReads;
-        sampledBases += rec->length();
-    }
-
-    readNum = 0;
-    // For small files where we reach the end of the file within the limit we use the exact count
-    if (reachedEOF) {
-        readNum = sampledReads;
-        // For larger files exceeding the read limit we extrapolate progress so far
-    } else if (sampledReads > 0) {
-        // We call getBytes to update bytesRead so we don't need to re-evaluate if splitting output
-        // is enabled
-        reader.getBytes(bytesRead, bytesTotal);
-        const double bytesPerRead =
-            static_cast<double>(bytesRead - firstRecOffset) / static_cast<double>(sampledReads);
-
-        // We use a 1% safety limit to account for under-evaluation due to potential bad quality
-        readNum = static_cast<long>(static_cast<double>(bytesTotal) * kSafetyFactor / bytesPerRead);
-    }
+    const auto stats = sampleReads(mOptions->in1, kReadLimit, kBaseLimit);
+    readNum          = extrapolateReadNum(stats, kDefaultSafetyFactor);
 }
 
 // TODO: This should be split up into multiple functions
