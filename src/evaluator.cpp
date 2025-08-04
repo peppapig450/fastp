@@ -25,21 +25,170 @@
 #endif
 
 namespace { // anon
+namespace detail { // detail
 
 // NEXTSEQ500, NEXTSEQ 550/550DX, NOVASEQ
-constexpr std::array<const char*, 4> prefixes = {"@NS", "@NB", "@NDX", "@A0"};
+constexpr std::array<const char*, 4> kTwoColorPrefixes = {"@NS", "@NB", "@NDX", "@A0"};
 
 auto starts_with_any(const std::string& name) -> bool {
-    return std::any_of(prefixes.begin(), prefixes.end(), [&](const char* prefix) {
-        std::size_t len = strlen(prefix);
+    return std::any_of(kTwoColorPrefixes.begin(), kTwoColorPrefixes.end(), [&](const char* prefix) {
+        const std::size_t len = strlen(prefix);
         return name.size() >= len && name.compare(0, len, prefix) == 0;
     });
 }
+
+// Heuristic for minimum threshold count
+auto minCountForLen(int fragmentLen, int seqlen) -> int {
+    return (fragmentLen >= seqlen - 1) ? 3
+           : (fragmentLen >= 100)      ? 5
+           : (fragmentLen >= 40)       ? 20
+           : (fragmentLen >= 20)       ? 100
+                                       : 500;  // fragmentLen >= 10
+}
+
+// Helpers for computeOverRepSeq
+
+using CountMap   = std::unordered_map<std::string, long>;
+// Using a pointer allows us to reference the contents of the string without copying
+using StringPair = std::pair<const std::string*, long>;
+
+// Count all k-mers at the chosen window sizes for a single read, this is pass 1 for
+// computeOverRepSeq
+void countKmers(const Read& read, const std::array<int, 5>& steps, CountMap& counts) {
+    const auto& seq    = read.seq();
+    const auto  seqLen = static_cast<int>(read.length());
+
+    for (int kmerLength : steps) {
+        if (seqLen <= kmerLength) {
+            continue;  // too short for this k-mer size
+        }
+
+        for (int i = 0; i + kmerLength <= seqLen; ++i) {
+            ++counts[seq.substr(static_cast<std::size_t>(i), static_cast<std::size_t>(kmerLength))];
+        }
+    }
+}
+
+// Pass 2 for computeOverRepSeq: transfer only entries passing the dynamic threshold into
+// `filteredCounts`
+void filterByMinCount(const CountMap& inputCounts, CountMap& filteredCounts, int fullSeqLen) {
+    using namespace detail;
+
+    for (const auto& countPair : inputCounts) {
+        if (countPair.second
+            >= minCountForLen(static_cast<int>(countPair.first.length()), fullSeqLen)) {
+            filteredCounts.emplace(countPair);
+        }
+    }
+}
+
+// Pass 3 for computeOverRepSeq: prune any short sequence that is largely contained in an longer,
+// more abundant one
+void eraseContainedSeqs(CountMap& seqs) {
+    // Sort pointers by descending length to visit long -> short
+    std::vector<StringPair> sorted;
+    sorted.reserve(seqs.size());
+    for (auto& countPair : seqs) {
+        sorted.emplace_back(&countPair.first, countPair.second);
+    }
+
+    // Since C++11 does not allow us to use auto in lambda parameters, we use a type alias to avoid
+    // typing out the type signature everytime
+    std::sort(sorted.begin(), sorted.end(), [](const StringPair& a, const StringPair& b) {
+        return a.first->length() > b.first->length();
+    });
+
+    const auto sortedCount = sorted.size();
+
+    std::unordered_set<std::string> doomed;
+    for (std::size_t i = 0; i < sortedCount; ++i) {
+        const auto&        longerPair  = sorted[i];
+        const std::string& longer      = *longerPair.first;
+        long               longerCount = longerPair.second;
+
+        for (std::size_t j = i + 1; j < sortedCount; ++j) {
+            const auto&        shorterPair  = sorted[j];
+            const std::string& shorter      = *shorterPair.first;
+            long               shorterCount = shorterPair.second;
+
+            if (longer.find(shorter) != std::string::npos && shorterCount < longerCount * 10) {
+                doomed.insert(shorter);
+            }
+        }
+    }
+
+    for (const auto& seq : doomed) {
+        seqs.erase(seq);
+    }
+}
+
+// Helpers for evaluateReadNum
+
+struct ReadSampleStats {
+    std::size_t reads       = 0;
+    std::size_t bases       = 0;
+    std::size_t bytesRead   = 0;
+    std::size_t bytesTotal  = 0;
+    std::size_t firstOffset = 0;
+    bool        reachedEOF  = false;
+};
+
+// We use a 1% safety limit to account for under-evaluation due to potential bad quality
+constexpr double kDefaultSafetyFactor = 1.01;
+
+auto sampleReads(const std::string& fastqPath, std::size_t maxReads, std::size_t maxBases)
+    -> ReadSampleStats {
+    ReadSampleStats stats;
+    FastqReader     reader {fastqPath};
+
+    while (stats.reads < maxReads && stats.bases < maxBases) {
+        std::unique_ptr<Read> read {reader.read()};
+        // If the returned pointer is null, there are no reads left so we mark EOF and break
+        if (read == nullptr) {
+            stats.reachedEOF = true;
+            break;
+        }
+
+        // After the very first read we get the entire file size
+        if (stats.reads == 0) {
+            reader.getBytes(stats.bytesRead, stats.bytesTotal);
+            stats.firstOffset = stats.bytesRead;
+        }
+        ++stats.reads;
+        stats.bases += read->length();
+    }
+
+    // Refresh byte counter if more data remains for extrapolation logic, this prevents
+    // re-evaluation if output splitting is enabled
+    if (!stats.reachedEOF && stats.reads > 0) {
+        reader.getBytes(stats.bytesRead, stats.bytesTotal);
+    }
+
+    return stats;
+}
+
+auto extrapolateReadNum(const ReadSampleStats& stats, double safety) -> long {
+    if (stats.reads == 0) {
+        return 0L;
+    }
+
+    if (stats.reachedEOF) {
+        return static_cast<long>(stats.reads);
+    }
+
+    const double bytesPerRead =
+        static_cast<double>(stats.bytesRead - stats.firstOffset) / static_cast<double>(stats.reads);
+    return static_cast<long>(static_cast<double>(stats.bytesTotal) * safety / bytesPerRead);
+}
+
+}  // namespace detail
 }  // namespace
 
 Evaluator::Evaluator(Options* opt) noexcept : mOptions(opt) {}
 
 bool Evaluator::isTwoColorSystem() {
+    using namespace detail;
+
     FastqReader reader(mOptions->in1);
 
     // Wrap in a unique_ptr for now
@@ -83,101 +232,39 @@ int Evaluator::computeSeqLen(const std::string& filename) {
     return maxLen;
 }
 
-// TODO: This should be split up into multiple functions as it is essentially 3 independent operations
 void Evaluator::computeOverRepSeq(const std::string&                filename,
                                   std::unordered_map<string, long>& hotseqs,
                                   int                               seqlen) {
-    constexpr std::int64_t   kBaseLimit = 151LL * 10000LL;  // 1.51 M bases ≈ 10 k 150 bp reads
+    using namespace detail;
+
+    constexpr std::int64_t   kBaseLimit = 151LL * 10000LL;  // 1.51 M bases ≈ 10k 150 bp reads
     const std::array<int, 5> kSteps {{10, 20, 40, 100, std::min(150, seqlen - 2)}};
 
     FastqReader reader(filename);
 
     // We reserve a decent-sized bucket count to reduce re-hashing during counting
-    std::unordered_map<std::string, long> seqCounts;
+    CountMap allCounts;
     // TODO: this is a heuristic and should be tuned to sample size, since sample sizes can vary we
     // should probably do this at runtime, maybe using the getBytes method
-    seqCounts.reserve(500000);
+    allCounts.reserve(500000);
 
-    int basesSeen = 0;
+    std::int64_t basesSeen = 0;
 
     // First pass we count k-mers
     while (basesSeen < kBaseLimit) {
-        std::unique_ptr<Read> read(reader.read());
-        if (read == nullptr) {
+        std::unique_ptr<Read> rec(reader.read());
+        if (rec == nullptr) {
             break;
         }
 
-        const auto& seq     = read->seq();
-        const int   readLen = static_cast<int>(seq.size());
-        basesSeen += readLen;
-
-        for (int step : kSteps) {
-            if (readLen <= step) {
-                continue;  // too short for this k
-            }
-
-            for (int i = 0; i + step <= readLen; ++i) {
-                // operator[] avoids double lookup
-                seqCounts[seq.substr(i, step)]++;
-            }
-        }
+        const Read& read  = *rec;
+        basesSeen        += static_cast<std::int64_t>(read.length());
+        countKmers(read, kSteps, allCounts);
     }
 
-    // Apply length based thresholds
-    const auto minCount = [seqlen](int len) -> int {
-        return (len >= seqlen - 1) ? 3
-               : (len >= 100)      ? 5
-               : (len >= 40)       ? 20
-               : (len >= 20)       ? 100
-                                   : 500;  // len >= 10
-    };
-
-    // because unordered_map uses const's internally, and extract doesn't exist yet (C++17),
-    // this is going to always copy the string
-    for (const auto& kv : seqCounts) {
-        if (kv.second >= minCount(static_cast<int>(kv.first.size()))) {
-            hotseqs.emplace(kv);
-        }
-    }
-
-    // Since C++11 does not allow us to use auto in lambda parameters, we use a type alias to avoid
-    // typing out the type signature everytime
-    using PtrCountPair = std::pair<const std::string*, long>;
-
-    // we use pointers here to string so that we avoid copying string objects directly,
-    // we can manipulate/move the original string.
-    std::vector<PtrCountPair> sorted;
-    sorted.reserve(hotseqs.size());
-    for (auto& kv : hotseqs) {
-        // Take a pointer to the string key
-        sorted.emplace_back(&kv.first, kv.second);
-    }
-
-    std::sort(sorted.begin(), sorted.end(), [](const PtrCountPair& a, const PtrCountPair& b) {
-        return a.first->size() > b.first->size();
-    });
-
-    // remove substrings
-    std::unordered_set<std::string> toErase;
-    for (std::size_t i = 0; i < sorted.size(); ++i) {
-        const auto&        longerPair  = sorted[i];
-        const std::string& longer      = *longerPair.first;
-        long               longerCount = longerPair.second;
-
-        for (std::size_t j = i + 1; j < sorted.size(); ++j) {
-            const auto&        shorterPair  = sorted[j];
-            const std::string& shorter      = *shorterPair.first;
-            long               shorterCount = shorterPair.second;
-
-            if (longer.find(shorter) != std::string::npos && shorterCount < longerCount * 10) {
-                toErase.insert(shorter);
-            }
-        }
-    }
-
-    for (const auto& seq : toErase) {
-        hotseqs.erase(seq);
-    }
+    // Move frequent fragments into caller-supplied map then prune
+    filterByMinCount(allCounts, hotseqs, seqlen);
+    eraseContainedSeqs(hotseqs);
 
     // output for test
     /*for(iter = hotseqs.begin(); iter!=hotseqs.end(); iter++) {
