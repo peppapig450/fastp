@@ -1,9 +1,9 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
 class Read;     // Forward declare Read
@@ -38,6 +38,12 @@ private:
     auto getAdapterWithSeed(int seed, const std::vector<std::unique_ptr<Read>>& reads, int keylen)
         -> std::string;
     static auto checkKnownAdapters(const std::vector<std::unique_ptr<Read>>& reads) -> std::string;
+
+    auto countKmersForAdapter(const std::vector<std::unique_ptr<Read>>& reads,
+                              std::vector<unsigned int>&                kmerCounts,
+                              std::size_t                               shiftTail) -> std::uint64_t;
+
+    auto tailShift() const -> std::size_t;
 
     Options* mOptions {nullptr};
 };

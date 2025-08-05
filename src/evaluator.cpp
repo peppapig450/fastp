@@ -3,9 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <memory>
-#include <numeric>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -120,65 +118,6 @@ void eraseContainedSeqs(CountMap& seqs) {
     for (const auto& seq : doomed) {
         seqs.erase(seq);
     }
-}
-
-// Helpers for evaluateReadNum
-
-struct ReadSampleStats {
-    std::size_t reads       = 0;
-    std::size_t bases       = 0;
-    std::size_t bytesRead   = 0;
-    std::size_t bytesTotal  = 0;
-    std::size_t firstOffset = 0;
-    bool        reachedEOF  = false;
-};
-
-// We use a 1% safety limit to account for under-evaluation due to potential bad quality
-constexpr double kDefaultSafetyFactor = 1.01;
-
-auto sampleReads(const std::string& fastqPath, std::size_t maxReads, std::size_t maxBases)
-    -> ReadSampleStats {
-    ReadSampleStats stats;
-    FastqReader     reader {fastqPath};
-
-    while (stats.reads < maxReads && stats.bases < maxBases) {
-        std::unique_ptr<Read> read {reader.read()};
-        // If the returned pointer is null, there are no reads left so we mark EOF and break
-        if (read == nullptr) {
-            stats.reachedEOF = true;
-            break;
-        }
-
-        // After the very first read we get the entire file size
-        if (stats.reads == 0) {
-            reader.getBytes(stats.bytesRead, stats.bytesTotal);
-            stats.firstOffset = stats.bytesRead;
-        }
-        ++stats.reads;
-        stats.bases += read->length();
-    }
-
-    // Refresh byte counter if more data remains for extrapolation logic, this prevents
-    // re-evaluation if output splitting is enabled
-    if (!stats.reachedEOF && stats.reads > 0) {
-        reader.getBytes(stats.bytesRead, stats.bytesTotal);
-    }
-
-    return stats;
-}
-
-auto extrapolateReadNum(const ReadSampleStats& stats, double safety) -> long {
-    if (stats.reads == 0) {
-        return 0L;
-    }
-
-    if (stats.reachedEOF) {
-        return static_cast<long>(stats.reads);
-    }
-
-    const double bytesPerRead =
-        static_cast<double>(stats.bytesRead - stats.firstOffset) / static_cast<double>(stats.reads);
-    return static_cast<long>(static_cast<double>(stats.bytesTotal) * safety / bytesPerRead);
 }
 
 // Helpers for checkKnownAdapters
@@ -302,6 +241,164 @@ auto isConfidentMatch(const AdapterStats& stats, std::size_t checkedReads) -> bo
                && stats.mismatches < static_cast<int>(checkedReads));
 }
 
+// Helpers for evalAdapterAndReadNum
+
+// Minimum reads required for evaluation
+constexpr int kMinRecordsEval    = 10000;
+// Length of k-mer
+constexpr int kKeyLen            = 10;
+// Total number of unique k-mers (4^k)
+constexpr std::size_t kKeySpace  = 1ULL << (kKeyLen * 2ULL);
+// Number of top scoring k-mers to retain
+constexpr int kTopCandidates     = 10;
+// Minimum fold-enrichment to consider a k-mer significant
+constexpr int kFoldThreshold     = 20;
+// We use a 1% safety limit to account for under-evaluation due to potential bad quality
+constexpr double kSafetyFactor = 1.01;
+
+struct SampleResult {
+public:
+    std::vector<std::unique_ptr<Read>> reads;  // sampled reads (owns memory if collectSeq=true)
+    std::size_t                        readsCount  = 0;      // number of reads sampled
+    std::size_t                        bases       = 0;      // total bases sampled
+    std::size_t                        bytesRead   = 0;      // current bytes position in file
+    std::size_t                        bytesTotal  = 0;      // total bytes in file
+    std::size_t                        firstOffset = 0;      // byte offset of 1st record
+    bool                               reachedEOF  = false;  // true -> consumed whole file
+
+    // Linear extrapolation : bytes / reads => total reads
+    auto extrapolateTotalReads(double safety = kSafetyFactor) const -> long {
+        if (readsCount == 0) {
+            return 0L;
+        }
+
+        if (reachedEOF) {
+            return static_cast<long>(readsCount);
+        }
+
+        const double bytesPerRead =
+            static_cast<double>(bytesRead - firstOffset) / static_cast<double>(readsCount);
+
+        return static_cast<long>(static_cast<double>(bytesTotal) * safety / bytesPerRead);
+    }
+};
+
+/**
+ * Core sampler that powers all sampling needs in `Evaluator`.
+ *
+ * @param fastqPath    Input FASTQ.
+ * @param maxReads     Stop sampling after this many reads.
+ * @param maxBases     Stop sampling after this many bases.
+ * @param collectSeq   When *true* the sequences are kept in memory (needed by
+ *                     de-novo adapter discovery); otherwise only statistics
+ *                     are gathered.
+ */
+auto sampleFastq(const std::string& fastqPath,
+                 std::size_t        maxReads,
+                 std::size_t        maxBases,
+                 bool               collectSeq = false) -> SampleResult {
+    SampleResult result;
+    FastqReader  reader {fastqPath};
+
+    while (result.readsCount < maxReads && result.bases < maxBases) {
+        std::unique_ptr<Read> read {reader.read()};
+        if (read == nullptr) {
+            result.reachedEOF = true;
+            break;
+        }
+
+        // We sample the file pointer for byte-offsets on the first read
+        if (result.readsCount == 0) {
+            reader.getBytes(result.bytesRead, result.bytesTotal);
+            result.firstOffset = result.bytesRead;
+        }
+
+        const std::size_t readLen  = read->length();
+        result.bases              += readLen;
+        ++result.readsCount;
+
+        if (collectSeq) {
+            result.reads.emplace_back(std::move(read));
+        }
+    }
+
+    // Refresh the byte counter if we don't reach the end of the file
+    if (!result.reachedEOF && result.readsCount > 0) {
+        reader.getBytes(result.bytesRead, result.bytesTotal);
+    }
+
+    return result;
+}
+
+struct SeedCandidate {
+    int          key   = -1;  // packed 2-bit representation of the k-mer
+    unsigned int count = 0;   // how often it was observed
+
+    SeedCandidate() = default;
+    explicit SeedCandidate(int key_, unsigned int count_)
+        : key(key_)
+        , count(count_) {}
+};
+
+// Quick low-complexity screen
+auto isLowComplexityKey(int packedKey) -> bool {
+    // clang-format off
+    std::array<int, 4> baseCount{{0,0,0,0,}};
+    // clang-format on
+    auto key = static_cast<unsigned int>(packedKey);
+
+    for (int i = 0; i < kKeyLen; ++i) {
+        ++baseCount[(key >> (i*2U)) & 0x3U];
+    }
+
+    if (*std::max_element(baseCount.begin(), baseCount.end()) >= kKeyLen - 4) {
+        return true;
+    }
+
+    return (baseCount[2] + baseCount[3] >= kKeyLen - 2) || ((key >> 12U) == 0xFFU);
+}
+
+// Pick the top-N most enriched seeds that survive complexity / enrichment filtering
+auto selectTopSeeds(const std::vector<unsigned int>& kmerCounts, std::uint64_t totalCounts)
+    -> std::vector<SeedCandidate> {
+    std::vector<SeedCandidate> topSeeds;
+    topSeeds.reserve(kTopCandidates);
+
+    const std::uint64_t enrichmentCutoff =
+        (totalCounts * static_cast<std::uint64_t>(kFoldThreshold)) / kKeySpace;
+
+    for (std::size_t k = 0; k < kmerCounts.size(); ++k) {
+        const unsigned int count = kmerCounts[k];
+        if (count < 10) {
+            continue;
+        }
+
+        if (isLowComplexityKey(static_cast<int>(k))) {
+            continue;
+        }
+
+        if (count < enrichmentCutoff) {
+            continue;
+        }
+
+        // insert into descending ordered container
+        SeedCandidate candidate {static_cast<int>(k), count};
+
+        auto iter = std::upper_bound(topSeeds.begin(),
+                                     topSeeds.end(),
+                                     candidate,
+                                     [](const SeedCandidate& a, const SeedCandidate& b) -> bool {
+                                         return a.count > b.count;
+                                     });
+        topSeeds.insert(iter, candidate);
+        if (topSeeds.size() > kTopCandidates) {
+            topSeeds.pop_back();
+        }
+    }
+
+    return topSeeds;
+}
+
 }  // namespace detail
 }  // namespace
 
@@ -417,8 +514,8 @@ void Evaluator::evaluateReadNum(long& readNum) {
     // but for consistency with the original code we keep it)
     constexpr std::int64_t kBaseLimit = 151LL * kReadLimit;
 
-    const auto stats = sampleReads(mOptions->in1, kReadLimit, kBaseLimit);
-    readNum          = extrapolateReadNum(stats, kDefaultSafetyFactor);
+    const auto stats = sampleFastq(mOptions->in1, kReadLimit, kBaseLimit, /*collectSeq=*/false);
+    readNum          = stats.extrapolateTotalReads();
 }
 
 auto Evaluator::checkKnownAdapters(const std::vector<std::unique_ptr<Read>>& reads) -> std::string {
@@ -462,205 +559,81 @@ auto Evaluator::checkKnownAdapters(const std::vector<std::unique_ptr<Read>>& rea
     return chosenAdapter;
 }
 
-// TODO: a lot of this logics is duplicated from elsewhere in the file, and it needs to be split up as well
-std::string Evaluator::evalAdapterAndReadNum(long& readNum, bool isR2) {
-    constexpr std::size_t kReadLimit      = 256ULL * 1024ULL;  // 256k reads
-    // Same cap in bases (~= readLimit * 151bp)
-    constexpr std::size_t kBaseLimit      = 151ULL * kReadLimit;
-    constexpr int         kKeyLen         = 10;  // k-mer length used for adapter seed
-    constexpr std::size_t kKeySpace       = 1ULL << (kKeyLen * 2ULL);  // 4^kKeyLen possible k-mers
-    constexpr int         kTopCandidates  = 10;                        // keep top-N enriched k-mers
-    constexpr int         kFoldThreshold  = 20;     // enrichment fold for candidate selection
-    constexpr int         kMinRecordsEval = 10000;  // need at least 10k reads to continue
-    // TODO: this is duplicated, move it to anon namesapce
-    constexpr double kSafetyFactor        = 1.01;  // +1% head-room when extrapolating
+auto Evaluator::evalAdapterAndReadNum(long& readNum, bool isR2) -> std::string {
+    using namespace detail;
 
-    const auto& filename = isR2 ? mOptions->in2 : mOptions->in1;
-    FastqReader reader {filename};
+    // Max number of reads to sample (<= 256,000)
+    constexpr std::size_t kReadLimit = 256ULL * 1024ULL;
+    // Upper limit of bases assuming 151 bp reads
+    // NOTE: since sequencers such as Illumina MiSeq i100 support 300 bp reads this may be too small
+    constexpr std::size_t kBaseLimit = 151ULL * kReadLimit;
 
-    std::vector<std::unique_ptr<Read>> reads;
-    reads.reserve(kReadLimit);
+    const std::string& fastqPath = isR2 ? mOptions->in2 : mOptions->in1;
 
-    std::size_t bytesRead      = 0;
-    std::size_t bytesTotal     = 0;
-    std::size_t firstRecOffset = 0;
+    // TODO: we may want to explicitly std::move here since RVO is not guaranteed
+    auto sample = sampleFastq(fastqPath, kReadLimit, kBaseLimit, /*collectSeq=*/true);
+    readNum     = sample.extrapolateTotalReads();
 
-    std::size_t sampledBases = 0;
-    bool        reachedEOF   = false;
-
-    while (reads.size() < kReadLimit && sampledBases < kBaseLimit) {
-        std::unique_ptr<Read> rec {reader.read()};
-
-        if (rec == nullptr) {
-            reachedEOF = true;
-            break;
-        }
-
-        // mark the start of the first record so that we can estimate bytes/read
-        if (reads.empty()) {
-            reader.getBytes(bytesRead, bytesTotal);
-            firstRecOffset = bytesRead;
-        }
-
-        sampledBases += rec->length();
-        reads.emplace_back(std::move(rec));
-    }
-
-    readNum = 0;
-    if (reachedEOF) {
-        readNum = static_cast<long>(reads.size());
-    } else if (!reads.empty()) {
-        // update readNum so we avoid having to re-evaluate if splitting output is enabled
-        reader.getBytes(bytesRead, bytesTotal);
-        const double bytesPerRead =
-            static_cast<double>(bytesRead - firstRecOffset) / static_cast<double>(reads.size());
-        // We use a 1% safety limit to account for under-evaluation due to potential bad quality
-        readNum = static_cast<long>(static_cast<double>(bytesTotal) * kSafetyFactor / bytesPerRead);
-    }
-
-    // Early exit, returning empty string if there is not enough data to evaluate reliably
+    const auto& reads = sample.reads;
     if (reads.size() < kMinRecordsEval) {
-        return {};
+        return {};  // not enough sample data to evaluate
     }
 
-    // Try to match against the known adapter list
-    auto known = checkKnownAdapters(reads);
-    if (known.length() > 8) {
+    std::string known = checkKnownAdapters(reads);
+    if (known.length() > kMinMatch) {
         return known;
     }
 
-    // Shift last cycle(s) to avoid noisy, low-quality tail bases (esp. in Illumina); uses
-    // trim.tail1
-    const std::size_t shiftTail = std::max<std::size_t>(1, mOptions->trim.tail1);
+    // Next we perform de-novo inference: looking for highly enriched k-mers that are unlikely to
+    // originate from biological sequence
+    const std::size_t shiftTail = tailShift();
 
     std::vector<unsigned int> kmerCounts(kKeySpace, 0);
+    const std::uint64_t       totalCounts = countKmersForAdapter(reads, kmerCounts, shiftTail);
 
-    for (const auto& rec : reads) {
-        const std::string& seq = rec->seq();
-        if (seq.length() < 20 + shiftTail + kKeyLen) {
-            continue;  // read too short for k-mer scan
-        }
+    auto seeds = std::move(selectTopSeeds(kmerCounts, totalCounts));
 
-        const std::size_t limit      = seq.length() - shiftTail - kKeyLen;
-        int               rollingKey = -1;
-        for (std::size_t pos = 20; pos <= limit; ++pos) {
-            rollingKey = seq2int(seq, static_cast<int>(pos), kKeyLen, rollingKey);
-            if (rollingKey >= 0) {
-                ++kmerCounts[static_cast<std::size_t>(rollingKey)];
-            }
-        }
-    }
-
-    // Ignore poly‑A (AAAAAAAAAA)
-    kmerCounts[0] = 0;
-
-    // Complexity filter
-    const auto isLowComplexity = [=](int key) noexcept {
-        assert(key >= 0);
-
-        std::array<int, 4> baseCnt = {{0, 0, 0, 0}};
-        const auto         ukey    = static_cast<unsigned int>(key);
-
-        for (std::size_t i = 0; i < static_cast<std::size_t>(kKeyLen); ++i) {
-            ++baseCnt[(ukey >> (i * 2U)) & 0x3U];
-        }
-
-        for (int base : baseCnt) {
-            // >= k-4 identical bases
-            if (base >= kKeyLen - 4) {
-                return true;
-            }
-        }
-
-        // Too GC-rich or starts with 4xG (GGGG...)
-        return (baseCnt[2U] + baseCnt[3U] >= kKeyLen - 2) || ((ukey >> 12U) == 0xFFU);
-    };
-
-    // Collect top-N enriched non-trivial k-mers
-    struct Candidate {
-        int          key   = 0;
-        unsigned int count = 0;
-
-        Candidate() = default;
-        explicit Candidate(int key_, unsigned int count_)
-            : key(key_)
-            , count(count_) {}
-    };
-
-    std::array<Candidate, kTopCandidates> top {};
-
-    std::uint64_t totalCounts = 0;
-    for (std::size_t k = 0; k < kKeySpace; ++k) {
-        unsigned int count = kmerCounts[k];
-        // We skip trivial k-mers
-        if (count == 0 || isLowComplexity(static_cast<int>(k))) {
-            continue;
-        }
-        totalCounts += count;
-
-        // Insert into descending-ordered fixed-size array
-        for (int i = kTopCandidates - 1; i >= 0; --i) {
-            if (count < top[i].count) {
-                // Found where count should go, insert at position+1
-                if (i < kTopCandidates - 1) {
-                    // Shift elements to make room
-                    for (int m = kTopCandidates - 1; m > i + 1; --m) {
-                        top[m] = top[m - 1];
-                    }
-                    top[i + 1] = Candidate {static_cast<int>(k), count};
-                }
-                break;
-            }
-
-            if (i == 0) {
-                // count >= all elements, insert at the top
-                for (int m = kTopCandidates - 1; m > 0; --m) {
-                    top[m] = top[m - 1];
-                }
-                top[0] = Candidate {static_cast<int>(k), count};
-            }
-        }
-    }
-
-    // Build adapter around each seed
-    for (const auto& cand : top) {
-        // If the array is prefilled with zeros, we skip entries
-        if (cand.key == 0) {
-            continue;
-        }
-
-        // NOTE: We name this cnt for now to avoid shadowing, this should be moved to another
-        // function
-        const std::int64_t cnt = cand.count;
-        // Check if the candidate is enriched enough, if not we stop looking at smaller ones
-        if (cnt < 10
-            || cnt * static_cast<std::int64_t>(kKeySpace)
-                   < static_cast<std::int64_t>(totalCounts)
-                         * static_cast<std::int64_t>(kFoldThreshold)) {
-            break;  // not enriched enough
-        }
-
-        // NOTE: This copy might be expensive depending on how much this is ran
-        const std::string seedSeq = int2seq(static_cast<unsigned int>(cand.key), kKeyLen);
-
-        // Reject seeds with <3 base transitions (low complexity)
-        int transitions = std::inner_product(seedSeq.begin(),
-                                             seedSeq.end() - 1,
-                                             seedSeq.begin() + 1,
-                                             0,
-                                             std::plus<int>(),
-                                             std::not_equal_to<char>());
-        if (transitions < 3) {
-            continue;
-        }
-
-        const auto adapter = getAdapterWithSeed(cand.key, reads, kKeyLen);
+    // Try to extend every promising seed into a full adapter
+    for (const auto& seed : seeds) {
+        std::string adapter = std::move(getAdapterWithSeed(seed.key, reads, kKeyLen));
         if (!adapter.empty()) {
-            return adapter;  // Success, de-novo adapter inferred
+            return adapter;
         }
     }
 
     return {};  // No adapter found
+}
+
+auto Evaluator::countKmersForAdapter(const std::vector<std::unique_ptr<Read>>& reads,
+                                     std::vector<unsigned int>&                kmerCounts,
+                                     std::size_t shiftTail) -> std::uint64_t {
+    using namespace detail;
+
+    std::uint64_t totalCounts = 0;
+
+    constexpr std::size_t kStartPos = 20;
+
+    for (const auto& read : reads) {
+        const std::string& seq = read->seq();
+        // Skip if the sequence is too short
+        if (seq.length() < kStartPos + shiftTail + static_cast<std::size_t>(kKeyLen)) {
+            continue;
+        }
+
+        const std::size_t limit   = seq.length() - shiftTail - static_cast<std::size_t>(kKeyLen);
+        int               rolling = -1;
+
+        for (std::size_t pos = kStartPos; pos <= limit; ++pos) {
+            rolling = Evaluator::seq2int(seq, static_cast<int>(pos), kKeyLen, rolling);
+            if (rolling >= 0) {
+                ++kmerCounts[static_cast<std::size_t>(rolling)];
+                ++totalCounts;
+            }
+        }
+    }
+
+    kmerCounts[0] = 0;  // ignore poly-A seed "AAAAAAAAAA"
+    return totalCounts;
 }
 
 std::string Evaluator::getAdapterWithSeed(int                                       seed,
@@ -743,7 +716,7 @@ std::string Evaluator::getAdapterWithSeed(int                                   
 auto Evaluator::int2seq(std::uint32_t val, int seqlen) const -> std::string {
     // Mapping for 2-bit values to DNA bases:
     // 00 -> 'A', 01 -> 'T', 10 -> 'C', 11 -> 'G'
-    static constexpr std::array<char, 4> kBases{{'A', 'T', 'C', 'G'}};
+    static constexpr std::array<char, 4> kBases {{'A', 'T', 'C', 'G'}};
 
     // Create a string with length `seqlen`, initialized with 'N' (unknown base)
     std::string result(seqlen, 'N');
@@ -752,8 +725,9 @@ auto Evaluator::int2seq(std::uint32_t val, int seqlen) const -> std::string {
     for (int i = seqlen - 1; i >= 0; --i) {
         // Extract the lowest 2 bits of `val` (mask with 0b11 = 0x3)
         // These 2 bits represent one DNA base (since 2 bits can encode 4 values)
-        result[i] = kBases[val & 0x3U]; // TODO: if 0x3U is used elsewhere make it a file level constant
-    
+        result[i] =
+            kBases[val & 0x3U];  // TODO: if 0x3U is used elsewhere make it a file level constant
+
         // Shift `val` right by 2 bases to process the next base in the next iteration
         val >>= 2;
     }
@@ -827,6 +801,12 @@ auto Evaluator::seq2int(const std::string& seq, int pos, int keylen, int lastVal
     }
 
     return static_cast<int>(key);
+}
+
+// We shift cycles at the end to avoid noisy tail data that is common in Illumina
+auto Evaluator::tailShift() const -> std::size_t {
+    assert(mOptions->trim.tail1 >= 0);
+    return std::max<std::size_t>(std::size_t(1), static_cast<std::size_t>(mOptions->trim.tail1));
 }
 
 EXCLUDE_FROM_COVERAGE
