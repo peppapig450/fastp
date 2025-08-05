@@ -181,6 +181,127 @@ auto extrapolateReadNum(const ReadSampleStats& stats, double safety) -> long {
     return static_cast<long>(static_cast<double>(stats.bytesTotal) * safety / bytesPerRead);
 }
 
+// Helpers for checkKnownAdapters
+
+constexpr std::size_t kMaxCheckReads  = 100000;                 // Stop checking after 100,000 reads
+constexpr std::size_t kMaxCheckBases  = kMaxCheckReads * 1000;  // Or after 100 million bases
+constexpr int         kMaxHit         = 1000;  // Max adapter hit count before saturation
+constexpr int         kMinMatch       = 8;     // Minimum required consecutive matching bases
+constexpr int         kMismatchFactor = 16;    // Allow 1 mismatch per 16 matched bases
+
+// Helper struct for adapter statistics
+struct AdapterStats {
+    int hits       = 0;
+    int mismatches = 0;
+};
+
+using AdapterStatsMap = std::unordered_map<std::string, AdapterStats>;
+
+// Initialize adapter statistics map
+auto initAdapterStats(const std::unordered_map<std::string, std::string>& adapters)
+    -> AdapterStatsMap {
+    AdapterStatsMap stats;
+    stats.reserve(adapters.size());
+
+    for (const auto& adapterPair : adapters) {
+        stats.emplace(adapterPair.first, AdapterStats {});
+    }
+
+    return stats;
+}
+
+// Compare adapter to read at a given position
+// Returns true if mismatches <= allowed, and sets `mismatches`
+auto matchAtPosition(const char* read,
+                     int         readLen,
+                     const char* adapter,
+                     int         adapterLen,
+                     int         startPos,
+                     int&        mismatches) noexcept -> bool {
+    const int compLen         = std::min(readLen - startPos, adapterLen);
+    const int allowedMismatch = compLen / kMismatchFactor;
+    mismatches                = 0;
+
+    const char* readStart = read + startPos;
+
+    // Loop until we encounter too many mismatches
+    for (int i = 0; i < compLen; ++i) {
+        if (adapter[i] != readStart[i] && ++mismatches > allowedMismatch) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Process a single adapter against a read sequence
+void processAdapter(const std::string& seq,
+                    const std::string& adapter,
+                    AdapterStats&      stats,
+                    int&               bestHitSoFar) {
+    const int readLen    = static_cast<int>(seq.length());
+    const int adapterLen = static_cast<int>(adapter.length());
+
+    // Early exit if it's impossible to fit
+    if (adapterLen >= readLen) {
+        return;
+    }
+
+    // Heuristic to skip weak contestants
+    if (bestHitSoFar > 20 && stats.hits < bestHitSoFar / 10) {
+        return;
+    }
+
+    const char* readData    = seq.data();
+    const char* adapterData = adapter.data();
+    const int   scanLimit   = readLen - kMinMatch;
+
+    for (int pos = 0; pos < scanLimit; ++pos) {
+        int mismatches;
+        if (!matchAtPosition(readData, readLen, adapterData, adapterLen, pos, mismatches)) {
+            continue;  // no good at this position
+        }
+
+        ++stats.hits;
+        stats.mismatches += mismatches;
+        bestHitSoFar      = std::max(bestHitSoFar, stats.hits);
+        break;  // found a hit -> next adapter
+    }
+}
+
+// Helper to decide which adapter "wins" when we are forced to choose from multiple
+auto selectBestAdapter(const AdapterStatsMap& stats, AdapterStats& bestStats)
+    -> const std::string* {
+    const std::string* bestAdapter = nullptr;
+
+    for (const auto& adapterEntry : stats) {
+        const auto& adapterName  = adapterEntry.first;
+        const auto& adapterStats = adapterEntry.second;
+
+        const int currentHits       = adapterStats.hits;
+        const int currentMismatches = adapterStats.mismatches;
+        const int bestHits          = bestStats.hits;
+        const int bestMismatches    = bestStats.mismatches;
+
+        if (bestAdapter == nullptr || currentHits > bestHits
+            || (currentHits == bestHits && currentMismatches < bestMismatches)
+            || (currentHits == bestHits && currentMismatches == bestMismatches
+                && adapterName.length() < bestAdapter->length())) {
+            bestAdapter = &adapterName;
+            bestStats   = adapterStats;
+        }
+    }
+
+    return bestAdapter;
+}
+
+// Simple confidence heuristic helper
+auto isConfidentMatch(const AdapterStats& stats, std::size_t checkedReads) -> bool {
+    return (stats.hits > static_cast<int>(checkedReads / 50))
+           || (stats.hits > static_cast<int>(checkedReads / 200)
+               && stats.mismatches < static_cast<int>(checkedReads));
+}
+
 }  // namespace detail
 }  // namespace
 
@@ -300,129 +421,45 @@ void Evaluator::evaluateReadNum(long& readNum) {
     readNum          = extrapolateReadNum(stats, kDefaultSafetyFactor);
 }
 
-// TODO: This should be split up into multiple functions
-std::string Evaluator::checkKnownAdapters(const std::vector<std::unique_ptr<Read>>& reads) {
+auto Evaluator::checkKnownAdapters(const std::vector<std::unique_ptr<Read>>& reads) -> std::string {
+    using namespace detail;
+
     const auto& knownAdapters = adapters::getKnown();
-
-    // TODO: giving Stats some methods for repeated code might be good
-    struct Stats {
-        int hits       = 0;  // number of matching reads
-        int mismatches = 0;  // total mismatched bases among hits
-    };
-
-    // Per-adapter statistics, (we reserve to avoid rehashing)
-    std::unordered_map<std::string, Stats> stats;
-    stats.reserve(knownAdapters.size());
-    for (const auto& kv : knownAdapters) {
-        stats.emplace(kv.first, Stats {});
-    }
-
-    constexpr std::size_t kMaxCheckReads  = 100000;                 // Allow up to 100k reads
-    constexpr std::size_t kMaxCheckBases  = kMaxCheckReads * 1000;  // Allow up to 100M bases
-    constexpr int         kMaxHit         = 1000;                   // at 1000 hits we exit
-    constexpr int         kMinMatch       = 8;   // minimal consecutive bases to compare
-    constexpr int         kMismatchFactor = 16;  // allow 1 mismatch every N bases
+    auto        stats         = initAdapterStats(knownAdapters);
 
     std::size_t checkedReads = 0;
     std::size_t checkedBases = 0;
-    int         bestHitSoFar = 0;  // running best hit count across adapters
+    int         bestHitSoFar = 0;
 
     for (const auto& readPtr : reads) {
         const auto& seq     = readPtr->seq();
-        const auto  readLen = static_cast<int>(seq.length());
+        const int   readLen = static_cast<int>(seq.length());
 
         ++checkedReads;
         checkedBases += static_cast<std::size_t>(readLen);
+
         if (checkedReads > kMaxCheckReads || checkedBases > kMaxCheckBases
             || bestHitSoFar > kMaxHit) {
             break;  // Exit once we have enough evidence
         }
 
-        const char* const readData = seq.data();
-
-        // Try every known adapter against this read
+        // Compare against every known adapter
         for (const auto& adapterPair : knownAdapters) {
-            const auto& adapter = adapterPair.first;
-            auto&       st      = stats[adapter];
-
-            const auto adapterLen = static_cast<int>(adapter.length());
-
-            // Skip if the adapter is longer than the read, as it's impossible to match
-            if (adapterLen >= readLen) {
-                continue;
-            }
-
-            // Heuristic: skip unlikely adapters to save work
-            if (bestHitSoFar > 20 && st.hits < bestHitSoFar / 10) {
-                continue;
-            }
-
-            const char* const adapterData = adapter.data();
-            const int         scanLimit   = readLen - kMinMatch;
-
-            // NOTE: this logic is pretty much identical to that in adaptertrimmer.cpp
-            for (int pos = 0; pos < scanLimit; ++pos) {
-                const int compLen         = std::min(readLen - pos, adapterLen);
-                const int allowedMismatch = compLen / kMismatchFactor;
-                int       mismatch        = 0;
-
-                const char* readPtr = &readData[pos];
-                for (int i = 0; i < compLen; ++i) {
-                    // Abort the position if there are too many mismatches
-                    if (adapterData[i] != readPtr[i] && ++mismatch > allowedMismatch) {
-                        break;
-                    }
-                }
-
-                if (mismatch <= allowedMismatch) {
-                    ++st.hits;
-                    st.mismatches += mismatch;
-                    bestHitSoFar   = std::max(bestHitSoFar, st.hits);
-                    break;  // Match found, we're done with this adapter
-                }
-            }
+            auto it = stats.find(adapterPair.first);
+            processAdapter(seq, adapterPair.first, it->second, bestHitSoFar);
         }
     }
 
-    // Choose the best fit adapter: more hits -> fewer mismatches -> shorter length
-    const std::string* bestAdapter = nullptr;
-    Stats              bestStats {};
-
-    for (const auto& kv : stats) {
-        const auto& name = kv.first;
-        const auto& st   = kv.second;
-
-        const int currentHits       = st.hits;
-        const int currentMismatches = st.mismatches;
-        const int bestHits          = bestStats.hits;
-        const int bestMismatches    = bestStats.mismatches;
-
-        if (bestAdapter == nullptr || currentHits > bestHits
-            || (currentHits == bestHits && currentMismatches < bestMismatches)
-            || (currentHits == bestHits && currentMismatches == bestMismatches
-                && name.length() < bestAdapter->length())) {
-            bestAdapter = &name;
-            bestStats   = st;
-        }
+    // Choose the best fit adapter
+    AdapterStats       winnerStats;
+    const std::string* bestAdapter = selectBestAdapter(stats, winnerStats);
+    if (bestAdapter == nullptr || !isConfidentMatch(winnerStats, checkedReads)) {
+        return {};  // No clear adapter found
     }
 
-    // No evidence of any adapter at all
-    if (bestAdapter == nullptr) {
-        return {};
-    }
-
-    const int  maxHits   = bestStats.hits;
-    const bool confident = (maxHits > static_cast<int>(checkedReads / 50))
-                           || (maxHits > static_cast<int>(checkedReads / 200)
-                               && bestStats.mismatches < static_cast<int>(checkedReads));
-
-    if (confident) {
-        const auto chosenAdapter = *bestAdapter;
-        std::cerr << knownAdapters.at(chosenAdapter) << '\n' << chosenAdapter << '\n';
-        return chosenAdapter;
-    }
-
-    return {};
+    auto chosenAdapter = *bestAdapter;
+    std::cerr << knownAdapters.at(chosenAdapter) << '\n' << chosenAdapter << '\n';
+    return chosenAdapter;
 }
 
 // TODO: a lot of this logics is duplicated from elsewhere in the file, and it needs to be split up as well

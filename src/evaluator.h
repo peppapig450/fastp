@@ -37,7 +37,7 @@ private:
     auto seq2int(const std::string& seq, int pos, int keylen, int lastVal = -1) const -> int;
     auto getAdapterWithSeed(int seed, const std::vector<std::unique_ptr<Read>>& reads, int keylen)
         -> std::string;
-    auto checkKnownAdapters(const std::vector<std::unique_ptr<Read>>& reads) -> std::string;
+    static auto checkKnownAdapters(const std::vector<std::unique_ptr<Read>>& reads) -> std::string;
 
     Options* mOptions {nullptr};
 };
