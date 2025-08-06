@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -33,17 +34,32 @@ public:
     static auto test() -> bool;
 
 private:
+    using ReadsVector = std::vector<std::unique_ptr<Read>>;
+
     auto int2seq(unsigned int val, int seqlen) const -> std::string;
     auto seq2int(const std::string& seq, int pos, int keylen, int lastVal = -1) const -> int;
-    auto getAdapterWithSeed(int seed, const std::vector<std::unique_ptr<Read>>& reads, int keylen)
-        -> std::string;
-    static auto checkKnownAdapters(const std::vector<std::unique_ptr<Read>>& reads) -> std::string;
+    auto getAdapterWithSeed(int seed, const ReadsVector& reads, int keylen) const -> std::string;
+    auto checkKnownAdapters(const ReadsVector& reads) const -> std::string;
 
-    auto countKmersForAdapter(const std::vector<std::unique_ptr<Read>>& reads,
-                              std::vector<unsigned int>&                kmerCounts,
-                              std::size_t                               shiftTail) -> std::uint64_t;
+    auto countKmersForAdapter(const ReadsVector&         reads,
+                              std::vector<unsigned int>& kmerCounts,
+                              std::size_t                shiftTail) const -> std::uint64_t;
 
     auto tailShift() const -> std::size_t;
+
+    // Helpers for evalAdapterAndReadNum
+
+    // TODO: determine whether these should go into anon namespace or not, the main reason I am not
+    // sure if they should is that it would require duplicating ReadsVector, and the functions arent
+    // exactly very generic
+    auto sampleReadsForAdapter(const std::string& fastqPath,
+                               long&              readNum,
+                               std::size_t        maxReads,
+                               std::size_t        maxBases) const -> ReadsVector;
+
+    auto hasSufficientSample(const ReadsVector& reads) const -> bool;
+
+    auto inferAdapterDeNovo(const ReadsVector& reads) const -> std::string;
 
     Options* mOptions {nullptr};
 };

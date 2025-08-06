@@ -518,7 +518,7 @@ void Evaluator::evaluateReadNum(long& readNum) {
     readNum          = stats.extrapolateTotalReads();
 }
 
-auto Evaluator::checkKnownAdapters(const std::vector<std::unique_ptr<Read>>& reads) -> std::string {
+auto Evaluator::checkKnownAdapters(const ReadsVector& reads) const -> std::string {
     using namespace detail;
 
     const auto& knownAdapters = adapters::getKnown();
@@ -570,32 +570,53 @@ auto Evaluator::evalAdapterAndReadNum(long& readNum, bool isR2) -> std::string {
 
     const std::string& fastqPath = isR2 ? mOptions->in2 : mOptions->in1;
 
-    // TODO: we may want to explicitly std::move here since RVO is not guaranteed
-    auto sample = sampleFastq(fastqPath, kReadLimit, kBaseLimit, /*collectSeq=*/true);
-    readNum     = sample.extrapolateTotalReads();
+    // sample and extrapolate read count
+    auto reads = sampleReadsForAdapter(fastqPath, readNum, kReadLimit, kBaseLimit);
 
-    const auto& reads = sample.reads;
-    if (reads.size() < kMinRecordsEval) {
-        return {};  // not enough sample data to evaluate
-    }
-
+    // try known adapter list first
     std::string known = checkKnownAdapters(reads);
-    if (known.length() > kMinMatch) {
+    if (!known.empty() && known.length() > static_cast<std::size_t>(kMinMatch)) {
         return known;
     }
 
-    // Next we perform de-novo inference: looking for highly enriched k-mers that are unlikely to
-    // originate from biological sequence
-    const std::size_t shiftTail = tailShift();
+    // final fallback to de-novo inference (seed enrichment + extension)
+    return inferAdapterDeNovo(reads);
+}
 
+auto Evaluator::sampleReadsForAdapter(const std::string& fastqPath,
+                                      long&              readNum,
+                                      std::size_t        maxReads,
+                                      std::size_t        maxBases) const -> ReadsVector {
+    using namespace detail;
+
+    // TODO: we may want to explicitly std::move here since RVO is not guaranteed
+    auto sample = sampleFastq(fastqPath, maxReads, maxBases, /*collectSeq=*/true);
+
+    readNum = sample.extrapolateTotalReads();
+
+    // unique_ptr is not copyable so this MUST be moved
+    return std::move(sample.reads);
+}
+
+auto Evaluator::hasSufficientSample(const ReadsVector& reads) const -> bool {
+    using namespace detail;
+    return reads.size() >= static_cast<std::size_t>(kMinRecordsEval);
+}
+
+auto Evaluator::inferAdapterDeNovo(const ReadsVector& reads) const -> std::string {
+    using namespace detail;
+
+    // build k-mer histogram, skipping noisy tail data common in Illumina data with shift)
+    const std::size_t         shiftTail = Evaluator::tailShift();
     std::vector<unsigned int> kmerCounts(kKeySpace, 0);
     const std::uint64_t       totalCounts = countKmersForAdapter(reads, kmerCounts, shiftTail);
 
-    auto seeds = std::move(selectTopSeeds(kmerCounts, totalCounts));
+    // pick enriched, non-low-complexity seeds
+    auto seeds = selectTopSeeds(kmerCounts, totalCounts);
 
-    // Try to extend every promising seed into a full adapter
+    // extend each seed into a candidate adapter, returning the first confident one
     for (const auto& seed : seeds) {
-        std::string adapter = std::move(getAdapterWithSeed(seed.key, reads, kKeyLen));
+        std::string adapter = getAdapterWithSeed(seed.key, reads, kKeyLen);
         if (!adapter.empty()) {
             return adapter;
         }
@@ -604,9 +625,9 @@ auto Evaluator::evalAdapterAndReadNum(long& readNum, bool isR2) -> std::string {
     return {};  // No adapter found
 }
 
-auto Evaluator::countKmersForAdapter(const std::vector<std::unique_ptr<Read>>& reads,
-                                     std::vector<unsigned int>&                kmerCounts,
-                                     std::size_t shiftTail) -> std::uint64_t {
+auto Evaluator::countKmersForAdapter(const ReadsVector&         reads,
+                                     std::vector<unsigned int>& kmerCounts,
+                                     std::size_t                shiftTail) const-> std::uint64_t {
     using namespace detail;
 
     std::uint64_t totalCounts = 0;
@@ -636,9 +657,8 @@ auto Evaluator::countKmersForAdapter(const std::vector<std::unique_ptr<Read>>& r
     return totalCounts;
 }
 
-std::string Evaluator::getAdapterWithSeed(int                                       seed,
-                                          const std::vector<std::unique_ptr<Read>>& reads,
-                                          int                                       keylen) {
+auto Evaluator::getAdapterWithSeed(int seed, const ReadsVector& reads, int keylen) const
+    -> std::string {
     constexpr int kMinScanPos       = 20;   // skip low-quality head
     constexpr int kMaxSearchLength  = 500;  // avoid wasting time deep in the read
     constexpr int kMaxAdapterLength = 60;   // hard-cap on reported adapter
