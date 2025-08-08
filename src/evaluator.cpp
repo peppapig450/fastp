@@ -540,10 +540,58 @@ auto Evaluator::checkKnownAdapters(const ReadsVector& reads) const -> std::strin
             break;  // Exit once we have enough evidence
         }
 
-        // Compare against every known adapter
-        for (const auto& adapterPair : knownAdapters) {
-            auto it = stats.find(adapterPair.first);
-            processAdapter(seq, adapterPair.first, it->second, bestHitSoFar);
+        bool shouldSkipRead = false;
+
+        // Check for high GC or GGGG pattens (homopolymers) in k-mer seeds within this read
+        constexpr std::size_t kStartPos = 20;
+
+        if (seq.length() >= kStartPos + static_cast<std::size_t>(kKeyLen)) {
+            const auto limit   = seq.length() - static_cast<std::size_t>(kKeyLen);
+            int        rolling = -1;
+
+            for (std::size_t pos = kStartPos; pos <= limit && !shouldSkipRead; ++pos) {
+                rolling = seq2int(seq, static_cast<int>(pos), kKeyLen, rolling);
+
+                if (rolling >= 0 && isLowComplexityKey(rolling)) {
+                    shouldSkipRead = true;
+                    break;
+                }
+            }
+        }
+
+        // Reject homopolymers / near-homopolymers
+        if (shouldSkipRead) {
+            continue;
+        }
+
+        //  Try exact multi-pattern match via Aho-Corasick (early exit on first)
+        {
+            const auto firstMatch = adapters::findFirstAdapter(seq, 0);
+            // TODO: using a struct for the return type so this bool check is clearer might be good
+            if (firstMatch.first) {
+                auto& matchStats = stats[firstMatch.second.sequence];
+
+                ++matchStats.hits;
+                // exact match -> 0 mismatches
+                bestHitSoFar = std::max(bestHitSoFar, matchStats.hits);
+                continue;  // go to next read
+            }
+        }
+
+        // Fallback: approximate matching with small, length-scaled tolerance
+        //    Allow ~readLen / kMismatchFactor mismatches, require at least kMinMatch length.
+        {
+            const int   approxMaxMismatches = std::max(1, readLen / kMismatchFactor);
+            const auto& approx = adapters::matchKnownApproximate(seq, approxMaxMismatches);
+
+            if (!approx.empty()) {
+                const auto& match      = approx.front();
+                auto&       matchStats = stats[match.sequence];
+
+                ++matchStats.hits;
+                matchStats.mismatches += match.mismatches;
+                bestHitSoFar           = std::max(bestHitSoFar, matchStats.hits);
+            }
         }
     }
 
@@ -716,12 +764,14 @@ auto Evaluator::getAdapterWithSeed(int seed, const ReadsVector& reads, int keyle
         adapter.resize(kMaxAdapterLength);
     }
 
-    // Prefer a perfect match against the adapter list
-    auto matched = adapters::matchKnown(adapter);
-    if (!matched.empty()) {
-        const auto& known = adapters::getKnown();
-        std::cerr << known.at(matched) << '\n' << matched << '\n';
-        return matched;
+    // Prefer a perfect match against the adapter list using Aho-Corasick.
+    // We require the known adapter to match at position 0 (exact prefix)
+    {
+        const auto firstMatch = adapters::findFirstAdapter(adapter, 0);
+        if (firstMatch.first && firstMatch.second.position == 0) {
+            std::cerr << firstMatch.second.name << '\n' << firstMatch.second.sequence << '\n';
+            return firstMatch.second.sequence;
+        }
     }
 
     // Otherwise return the de-novo adapter only if both paths were resolved
