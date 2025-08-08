@@ -1,19 +1,17 @@
 #include "knownadapters.h"
 
+#include <algorithm>
+#include <cstddef>
+#include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
+
+#include "ahocorasick.h"
 
 // Some adapter sequences are from
 // https://github.com/stephenturner/adapters/blob/master/adapters_combined_256_unique.fasta
 
-// TODO: Consider refactoring to use a more efficient data structure such as a PATRICIA trie
-// (compressed radix tree) or a burst trie. These structures can exploit common prefixes among
-// adapter sequences to reduce memory usage and improve lookup and matching performance.
-//
-// Additionally, these structures can support finite automata-based algorithms like Aho-Corasick,
-// which enable simultaneous multi-pattern matching in linear time relative to the input size.
-// This could allow matching against all known adapters in a single pass, improving performance
-// for large-scale sequence processing.
 namespace adapters {  // adapters
 
 using AdapterMap = std::unordered_map<std::string, std::string>;
@@ -289,4 +287,134 @@ auto matchKnown(const std::string& seq) -> std::string {
 
     return {};
 }
+
+// Get or create the singleton Aho-Corasick automaton
+auto getAhoCorasickMatcher() -> AhoCorasick& {
+    static auto matcher = []() -> std::unique_ptr<AhoCorasick> {
+        auto matcher = std::unique_ptr<AhoCorasick>(new AhoCorasick());
+
+        // Add all known adapters to the automaton
+        const auto& adapters = getKnown();
+        for (const auto& adapterPair : adapters) {
+            const auto& sequence = adapterPair.first;
+            const auto& name     = adapterPair.second;
+
+            matcher->addPattern(sequence, name);
+        }
+
+        // Build the failure links
+        matcher->build();
+
+        return matcher;
+    }();
+
+    return *matcher;
+}
+
+// Efficient multi-pattern matching using Aho-Corasick
+auto matchKnownAhoCorasick(const std::string& seq, std::size_t startPos)
+    -> std::vector<AdapterMatch> {
+    auto& matcher = getAhoCorasickMatcher();
+    auto  acMatches = matcher.search(seq);
+
+    std::vector<AdapterMatch> results;
+    results.reserve(acMatches.size());
+
+    for (const auto& match : acMatches) {
+        // Only include matches that start at or after startPos
+        if (match.position >= startPos) {
+            results.push_back({
+                match.pattern,
+                match.name,
+                match.position,
+                0  // No mismatches in exact matching
+            });
+        }
+    }
+
+    return results;
+}
+
+// Find first adapter match (optimized for early termination)
+auto findFirstAdapter(const std::string& seq, std::size_t startPos)
+    -> std::pair<bool, AdapterMatch> {
+    auto& matcher   = getAhoCorasickMatcher();
+    auto  matchPair = matcher.findFirst(seq, startPos);
+
+    const auto& found = matchPair.first;
+    const auto& match = matchPair.second;
+
+    if (found) {
+        return {true,
+                {
+                    match.pattern,
+                    match.name,
+                    match.position,
+                    0  // No mismatches
+                }};
+    }
+
+    return {false, {}};
+}
+
+// Approximate matching with mismatches
+auto matchKnownApproximate(const std::string& seq, int maxMismatches, int minMatchLength)
+    -> std::vector<AdapterMatch> {
+    std::vector<AdapterMatch> results;
+    const auto&               adapters = getKnown();
+
+    // For approximate matching, we still need to check each adapter
+    // but we can optimize by using the Aho-Corasick matcher for exact prefix matches
+    // and then extending with mismatch tolerance
+
+    for (const auto& adapterPair : adapters) {
+        const auto& adapter = adapterPair.first;
+        const auto& name    = adapterPair.second;
+
+        if (static_cast<int>(adapter.length()) < minMatchLength) {
+            continue;
+        }
+
+        // Scan through the sequence looking for approximate matches
+        for (std::size_t pos = 0; pos <= seq.length() - static_cast<std::size_t>(minMatchLength); ++pos) {
+            std::size_t compareLen = std::min(adapter.length(), seq.length() - pos);
+            if (static_cast<int>(compareLen) < minMatchLength) {
+                break;
+            }
+
+            // TODO: this is probably going to be a bottleneck, profile to make sure and then we
+            // should use a more effective algorithm
+            // Count mismatches
+            int mismatches = 0;
+            for (std::size_t i = 0; i < compareLen; ++i) {
+                if (seq[pos + i] != adapter[i]) {
+                    ++mismatches;
+                    if (mismatches > maxMismatches) {
+                        break;
+                    }
+                }
+            }
+
+            // If within mismatch threshold, record the match
+            if (mismatches <= maxMismatches) {
+                results.push_back({adapter,
+                                   name,
+                                   pos,  // Only record first match per adapter
+                                   mismatches});
+                break;
+            }
+        }
+    }
+
+    // Sort results by position, and then by mismatch count
+    std::sort(results.begin(), results.end(), [](const AdapterMatch& a, const AdapterMatch& b) {
+        if (a.position != b.position) {
+            return a.position < b.position;
+        }
+        return a.mismatches < b.mismatches;
+    });
+
+    return results;
+}
+
 }  // namespace adapters
