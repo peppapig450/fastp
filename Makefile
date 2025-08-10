@@ -21,6 +21,7 @@ STATIC_FLAGS := -static -Wl,--no-as-needed -pthread
 LD_FLAGS := $(foreach librarydir,$(LIBRARY_DIRS),-L$(librarydir)) $(LIBS) $(LD_FLAGS)
 STATIC_LD_FLAGS := $(foreach librarydir,$(LIBRARY_DIRS),-L$(librarydir)) $(STATIC_FLAGS) $(LIBS) $(STATIC_LD_FLAGS)
 
+export MAKEFLAGS
 
 ${BIN_TARGET}:${OBJ}
 	$(CXX) $(OBJ) -o $@ $(LD_FLAGS)
@@ -32,8 +33,8 @@ ${DIR_OBJ}/%.o:${DIR_SRC}/%.cpp
 	@mkdir -p $(@D)
 	$(CXX) -c $< -o $@ $(CXXFLAGS)
 
-.PHONY:clean
-.PHONY:static
+.PHONY:clean static test coverage-report
+
 clean:
 	@rm -rf $(DIR_OBJ)
 	@rm -f $(TARGET)
@@ -41,5 +42,11 @@ clean:
 install:
 	install $(TARGET) $(BINDIR)/$(TARGET)
 	@echo "Installed."
+
+test:
+	$(MAKE) -C local_tests test
+
+coverage-report:
+	$(MAKE) -C local_tests coverage-report COVERAGE=1
 
 -include $(OBJ:.o=.d)
