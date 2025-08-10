@@ -9,6 +9,7 @@
 
 class Read;     // Forward declare Read
 class Options;  // Forward declare options
+struct EvaluatorAccess; // Forward declare helper for tests
 
 class Evaluator final {
 public:
@@ -60,6 +61,8 @@ private:
     auto hasSufficientSample(const ReadsVector& reads) const -> bool;
 
     auto inferAdapterDeNovo(const ReadsVector& reads) const -> std::string;
+
+    friend struct EvaluatorAccess;
 
     Options* mOptions {nullptr};
 };

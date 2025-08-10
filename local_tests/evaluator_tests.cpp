@@ -8,9 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-#define private public
-#include "evaluator.h"
-#undef private
+#include "evaluator_access.hpp"
 #include "knownadapters.h"
 #include "adapter_reads.h"
 #include "fastqreader.h"
@@ -94,25 +92,26 @@ TEST(EvaluatorTests, MatchKnownAdapter) {
 TEST(EvaluatorTests, CheckKnownAdaptersPositive) {
     Evaluator eval(nullptr);
     auto      reads = createReadsWithKnownAdapter();
-    EXPECT_EQ("AGATCGGAAGAGCACACGTCTGAACTCCAGTCA", eval.checkKnownAdapters(reads));
+    EXPECT_EQ("AGATCGGAAGAGCACACGTCTGAACTCCAGTCA",
+              EvaluatorAccess::checkKnownAdapters(eval, reads));
 }
 
 TEST(EvaluatorTests, CheckKnownAdaptersNegative) {
     Evaluator eval(nullptr);
     auto      reads = createReadsWithoutAdapter();
-    EXPECT_EQ("", eval.checkKnownAdapters(reads));
+    EXPECT_EQ("", EvaluatorAccess::checkKnownAdapters(eval, reads));
 }
 
 TEST(EvaluatorTests, SeqIntRoundTrip) {
     Evaluator eval(nullptr);
     string    s   = "ATCGAT";
-    int       val = eval.seq2int(s, 0, static_cast<int>(s.size()), -1);
-    EXPECT_EQ(s, eval.int2seq(val, static_cast<int>(s.size())));
+    int       val = EvaluatorAccess::seq2int(eval, s, 0, static_cast<int>(s.size()), -1);
+    EXPECT_EQ(s, EvaluatorAccess::int2seq(eval, val, static_cast<int>(s.size())));
 }
 
 TEST(EvaluatorTests, Seq2IntInvalidBase) {
     Evaluator eval(nullptr);
-    EXPECT_EQ(-1, eval.seq2int("ATCN", 0, 4, -1));
+    EXPECT_EQ(-1, EvaluatorAccess::seq2int(eval, "ATCN", 0, 4, -1));
 }
 
 TEST(EvaluatorTests, RollingSeq2IntMatchesFreshCall) {
@@ -121,8 +120,8 @@ TEST(EvaluatorTests, RollingSeq2IntMatchesFreshCall) {
     int       keylen  = 4;
     int       rolling = -1;
     for (int i = 0; i <= static_cast<int>(seq.size()) - keylen; ++i) {
-        rolling         = eval.seq2int(seq, i, keylen, rolling);
-        int fromScratch = eval.seq2int(seq, i, keylen, -1);
+        rolling         = EvaluatorAccess::seq2int(eval, seq, i, keylen, rolling);
+        int fromScratch = EvaluatorAccess::seq2int(eval, seq, i, keylen, -1);
         EXPECT_EQ(fromScratch, rolling) << "Mismatch at position " << i;
     }
 }
@@ -405,8 +404,8 @@ TEST(EvaluatorTests, GetAdapterWithSeedReconstructsAdapter) {
     Options    opt;
     Evaluator  eval(&opt);
     const int  keylen = 10;
-    int        seed   = eval.seq2int(adapter, 0, keylen, -1);
-    string     got    = eval.getAdapterWithSeed(seed, reads, keylen);
+    int        seed   = EvaluatorAccess::seq2int(eval, adapter, 0, keylen, -1);
+    string     got    = EvaluatorAccess::getAdapterWithSeed(eval, seed, reads, keylen);
     EXPECT_EQ(adapter, got);
 }
 
@@ -430,8 +429,8 @@ TEST(EvaluatorTests, GetAdapterWithSeedUnknownAdapter) {
     Evaluator eval(&opt);
     const int keylen  = 10;
     const int seedPos = 10;
-    int       seed    = eval.seq2int(adapter, seedPos, keylen, -1);
-    string    got     = eval.getAdapterWithSeed(seed, reads, keylen);
+    int       seed    = EvaluatorAccess::seq2int(eval, adapter, seedPos, keylen, -1);
+    string    got     = EvaluatorAccess::getAdapterWithSeed(eval, seed, reads, keylen);
     EXPECT_EQ(adapter, got);
 }
 
@@ -451,8 +450,8 @@ TEST(EvaluatorTests, GetAdapterWithSeedNoDominantPath) {
     Options   opt;
     Evaluator eval(&opt);
     const int keylen = 10;
-    int       seed   = eval.seq2int(seedSeq, 0, keylen, -1);
-    string    got    = eval.getAdapterWithSeed(seed, reads, keylen);
+    int       seed   = EvaluatorAccess::seq2int(eval, seedSeq, 0, keylen, -1);
+    string    got    = EvaluatorAccess::getAdapterWithSeed(eval, seed, reads, keylen);
     EXPECT_EQ("", got);
 }
 

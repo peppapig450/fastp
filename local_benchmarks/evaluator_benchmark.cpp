@@ -2,9 +2,7 @@
 
 #include <string_view>
 
-#define private public
-#include "evaluator.h"
-#undef private
+#include "../local_tests/evaluator_access.hpp"
 #include "fastqreader.h"
 #include "include/benchmark_data.hpp"
 #include "knownadapters.h"
@@ -37,7 +35,7 @@ static void BM_CheckKnownAdapters_Current_Realistic(benchmark::State& state) {
     Evaluator evaluator(nullptr);
 
     for (auto _ : state) {
-        auto result = evaluator.checkKnownAdapters(reads);
+        auto result = EvaluatorAccess::checkKnownAdapters(evaluator, reads);
         benchmark::DoNotOptimize(result);
     }
 
