@@ -5,6 +5,7 @@ project(evaluator_benchmark CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Add your optimization and define flags
 add_compile_options(-O2 -DNDEBUG -pthread)
@@ -73,3 +74,15 @@ add_custom_target(profile_benchmark
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Profiling benchmark with perf"
 )
+
+file(GLOB BENCHMARK_HEADERS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp")
+
+add_library(header_compile_dummy OBJECT ${BENCHMARK_HEADERS})
+set_source_files_properties(${BENCHMARK_HEADERS}
+    PROPERTIES
+        LANGUAGE CXX
+        HEADER_FILE_ONLY OFF)
+
+target_include_directories(header_compile_dummy PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
