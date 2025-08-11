@@ -60,6 +60,12 @@ inline auto mutateBase(char nucleotideBase) -> char {
     }
 }
 
+inline auto randBase(std::mt19937& rng) -> char {
+    static constexpr std::array<char, 4> bases {'A', 'C', 'G', 'T'};
+    std::uniform_int_distribution<int>   randomDistribution(0, 3);
+    return bases[randomDistribution(rng)];
+}
+
 inline auto randQual(std::size_t sequenceLength, std::mt19937& randomGenerator) -> std::string {
     std::uniform_int_distribution<int> qualityScoreDistribution {33, 73};  // PHRED 33
 

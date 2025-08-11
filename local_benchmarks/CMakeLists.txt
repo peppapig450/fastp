@@ -32,6 +32,7 @@ set(FASTP_SRCS
 # Benchmark source(s)
 set(BENCHMARK_SRCS
     evaluator_benchmark.cpp
+    adapter_benchmark.cpp
 )
 
 # Combine all sources
