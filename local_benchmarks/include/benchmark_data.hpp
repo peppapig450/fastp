@@ -522,7 +522,7 @@ private:
     auto materializeGenome(const std::string& refPath,
                            const std::string& vcfPath,
                            const std::string& tag) -> std::string {
-        if (mason_.materialize) {
+        if (!mason_.materialize) {
             return {};
         }
 
