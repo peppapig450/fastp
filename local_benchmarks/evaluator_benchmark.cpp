@@ -1,8 +1,11 @@
 #include <benchmark/benchmark.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <format>
-#include <string_view>
+#include <source_location>
+#include <string>
 
 #include "../local_tests/evaluator_access.hpp"
 #include "evaluator.h"
@@ -14,8 +17,12 @@
 
 namespace {  // anon
 
-constexpr auto ReferenceGenomePath =
-    std::string_view("reference_genome/GCF_000001405.40/GCF_000001405.40_GRCh38.p14_genomic.fna");
+const std::string ReferenceGenomePath = [] {
+    const auto base =
+        std::filesystem::path {std::source_location::current().file_name()}.parent_path();
+    return (base / "reference_genome/GCF_000001405.40/GCF_000001405.40_GRCh38.p14_genomic.fna")
+        .string();
+}();
 
 void SetBenchmarkState(benchmark::State& state, std::size_t readCount, std::size_t readLength) {
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(readCount));
