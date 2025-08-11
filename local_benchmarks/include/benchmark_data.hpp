@@ -559,7 +559,7 @@ private:
                 << " -ir " << std::quoted(refPath)
                 << " -n "  << numReads
                 << " --seq-technology illumina"
-                << " -ll " << readLength
+                << " --illumina-read-length " << readLength
                 << " --num-threads " << cpu_count_
                 << " -o "  << std::quoted(output1);
             // clang-format on
