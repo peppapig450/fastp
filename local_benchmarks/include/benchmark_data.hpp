@@ -151,7 +151,7 @@ inline auto hardware_concurrency() -> unsigned {
 }
 }  // namespace cpu
 
-namespace detail {
+namespace {  // anon
 
 #ifdef _WIN32
 constexpr const char* path_separator = ";";
@@ -285,14 +285,14 @@ void contamOneFile(const std::string& inFastq, const std::string& outFastq, doub
     contaminateStream(input, output, contamRate);
 }
 
-}  // namespace detail
-
 // Helper function for running a command
 void runCommand(const std::string& cmd, const std::string& errorMessage) {
     if (std::system(cmd.c_str()) != 0) {
         throw std::runtime_error(errorMessage + ": " + cmd);
     }
 }
+
+}  // namespace
 
 struct MasonAvailability {
     bool simulator   = false;
@@ -397,8 +397,6 @@ private:
                              std::string_view   refFasta) -> DatasetReturn<IsPairedEnd>;
 
     void ensureMasonAvailable() {
-        using namespace detail;
-
         mason_.simulator   = is_command_available("mason_simulator");
         mason_.variator    = is_command_available("mason_variator");
         mason_.materialize = is_command_available("mason_materializer");
@@ -626,7 +624,6 @@ private:
     auto addAdapterContamination(const std::string& cleanFastq,
                                  double             contamRate,
                                  const std::string& suffix) -> std::string {
-        using namespace detail;
         constexpr int randomSeed = 666;
 
         auto outputPath = workDir_ / ("contaminated_" + suffix + ".fastq");
@@ -643,8 +640,6 @@ private:
                                    double             contamRate,
                                    const std::string& suffix)
         -> std::pair<std::string, std::string> {
-        using namespace detail;
-
         auto outR1 = workDir_ / ("contaminated_" + suffix + "_R1.fastq");
         auto outR2 = workDir_ / ("contaminated_" + suffix + "_R2.fastq");
 
