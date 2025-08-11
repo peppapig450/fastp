@@ -20,6 +20,7 @@
 
 #include "evaluator.h"
 #include "fastqreader.h"
+#include "fragment_config.hpp"
 #include "knownadapters.h"
 #include "read.h"
 
@@ -320,7 +321,7 @@ public:
                          double             adapterContamRate = 0.1,
                          const std::string& errorModel        = "hiseq",
                          bool               withVariants      = false,
-                         std::string_view refFasta          = {}) -> std::string {
+                         std::string_view   refFasta          = {}) -> std::string {
         return generateDatasetImpl<false>(name,
                                           numReads,
                                           readLength,
@@ -339,8 +340,7 @@ public:
                            double             adapterContamRate = 0.1,
                            const std::string& errorModel        = "hiseq",
                            bool               withVariants      = false,
-                           std::string_view refFasta          = {})
-        -> std::pair<std::string, std::string> {
+                           std::string_view refFasta = {}) -> std::pair<std::string, std::string> {
         return generateDatasetImpl<true>(name,
                                          numReads,
                                          readLength,
@@ -372,10 +372,13 @@ public:
         return reads;
     }
 
+    void setFragmentConfig(std::optional<FragmentConfig> fragConfig) { fragment_cfg_ = fragConfig; }
+
 private:
-    fs::path          workDir_;
-    unsigned          cpu_count_;
-    MasonAvailability mason_;
+    fs::path                      workDir_;
+    unsigned                      cpu_count_;
+    MasonAvailability             mason_;
+    std::optional<FragmentConfig> fragment_cfg_;
 
     template <bool IsPairedEnd>
     using DatasetReturn = std::conditional_t<IsPairedEnd,
@@ -391,7 +394,7 @@ private:
                              double             adapterContamRate,
                              const std::string& errorModel,
                              bool               withVariants,
-                             std::string_view refFasta) -> DatasetReturn<IsPairedEnd>;
+                             std::string_view   refFasta) -> DatasetReturn<IsPairedEnd>;
 
     void ensureMasonAvailable() {
         using namespace detail;
@@ -430,7 +433,7 @@ private:
     // If user passes an external FASTA, ensure it exists and looks like FASTA
     auto validateReferenceGenome(std::string_view refFasta) -> fs::path {
         fs::path path {refFasta};
-        
+
         if (!fs::exists(path)) {
             throw std::runtime_error("Reference FASTA not found: " + path.string());
         }
@@ -553,6 +556,11 @@ private:
                                 const std::string&                output1,
                                 const std::optional<std::string>& output2 = std::nullopt) -> void {
         if (mason_.simulator) {
+            // pick caller specified config or use safe defaults based on read length
+            FragmentConfig fragmentConfig =
+                fragment_cfg_.value_or(FragmentConfig::SafeDefaults(readLength));
+            fragmentConfig.validate(readLength);
+
             std::ostringstream cmd;
             // clang-format off
             cmd << "mason_simulator"
@@ -560,10 +568,23 @@ private:
                 << " -n "  << numReads
                 << " --seq-technology illumina"
                 << " --illumina-read-length " << readLength
-                << " --num-threads " << cpu_count_
-                << " -o "  << std::quoted(output1);
+                << " --num-threads " << cpu_count_ << ' ';
             // clang-format on
 
+            cmd << " --fragment-size-model " << fragmentConfig.model;
+            if (fragmentConfig.model == FragmentModel::Normal) {
+                // clang-format off
+                cmd << " --fragment-mean-size "     << fragmentConfig.mean
+                    << " --fragment-size-std-dev "  << fragmentConfig.stddev;
+                // clang-format on
+            } else if (fragmentConfig.model == FragmentModel::Uniform) {
+                // clang-format off
+                cmd << " --fragment-min-size " << fragmentConfig.min_size
+                    << " --fragment-max-size " << fragmentConfig.max_size;
+                // clang-format on
+            }
+
+            cmd << " -o " << std::quoted(output1);
             if (output2) {
                 cmd << " -or " << std::quoted(*output2);
             }
@@ -674,7 +695,7 @@ auto MasonDataGenerator::generateDatasetImpl(const std::string& name,
                                              double             adapterContamRate,
                                              const std::string& errorModel,
                                              bool               withVariants,
-                                             std::string_view refFasta)
+                                             std::string_view   refFasta)
     -> DatasetReturn<IsPairedEnd> {
     // Check if output already exists
     if constexpr (IsPairedEnd) {
@@ -691,8 +712,8 @@ auto MasonDataGenerator::generateDatasetImpl(const std::string& name,
     }
 
     // (1) reference: provided or synthetic
-    const auto baseRef =
-        (refFasta.empty() ? fs::path(generateReferenceGenome(name)) : validateReferenceGenome(refFasta));
+    const auto baseRef = (refFasta.empty() ? fs::path(generateReferenceGenome(name))
+                                           : validateReferenceGenome(refFasta));
 
     // (2) optional variants (VCF) tagged by `name`
     std::string vcfPath;
