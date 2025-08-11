@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(evaluator_benchmark CXX)
 
+include(CTest)
+
 # Set language standard & build options
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -59,6 +61,11 @@ target_link_libraries(${PROJECT_NAME}
         pthread
         ${ISAL_LIBRARIES}
 )
+
+if(BUILD_TESTING)
+    add_test(NAME evaluator_benchmark
+             COMMAND ${PROJECT_NAME} --benchmark_min_time=2.0s --benchmark_repetitions=1 --benchmark_report_aggregates_only=true)
+endif()
 
 # Add custom targets for benchmark & profile (optional)
 add_custom_target(run_benchmark
