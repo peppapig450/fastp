@@ -120,8 +120,10 @@ static void BM_CheckKnownAdapters_LowComplexitySkip(benchmark::State& state) {
     const auto readCount  = static_cast<std::size_t>(state.range(0));
     const auto readLength = static_cast<std::size_t>(state.range(1));
 
+    const std::string tag =
+        std::format("skipLC_rr{}_len{}", readCount, readLength);
     auto fastq =
-        benchmark_util::makeLowComplexityFastq("skipLC",
+        benchmark_util::makeLowComplexityFastq(tag,
                                                readCount,
                                                readLength,
                                                24,
@@ -146,12 +148,14 @@ static void BM_CheckKnownAdapters_AdapterPrefixDominant(benchmark::State& state)
     const auto readCount  = static_cast<std::size_t>(state.range(0));
     const auto readLength = static_cast<std::size_t>(state.range(1));
 
-    auto fq    = benchmark_util::makeAdapterPrefixFastq("pref",
-                                                     readCount,
-                                                     readLength,
-                                                     /*prefix_prob=*/1.0,
-                                                     static_cast<unsigned>(
-                                                         bench_seed::derive_seed("adapterprefix")));
+    const std::string tag =
+        std::format("pref_rr{}_len{}", readCount, readLength);
+    auto fq               = benchmark_util::makeAdapterPrefixFastq(
+                      tag,
+                      readCount,
+                      readLength,
+                      /*prefix_prob=*/1.0,
+                      static_cast<unsigned>(bench_seed::derive_seed("adapterprefix")));
     auto reads = benchmark_util::loadReads(fq, readCount);
 
     Evaluator evaluator(nullptr);
@@ -172,13 +176,15 @@ static void BM_CheckKnownAdapters_NearAdapterApprox(benchmark::State& state) {
     const auto pos        = static_cast<std::size_t>(state.range(2));
     const auto mismatches = static_cast<int>(state.range(3));
 
-    auto fq    = benchmark_util::makeNearAdapterFastq("near",
-                                                   readCount,
-                                                   readLength,
-                                                   pos,
-                                                   mismatches,
-                                                   static_cast<unsigned>(
-                                                       bench_seed::derive_seed("nearadapter")));
+    const std::string tag =
+        std::format("near_pos{}_mm{}", pos, mismatches);
+    auto fq               = benchmark_util::makeNearAdapterFastq(
+                      tag,
+                      readCount,
+                      readLength,
+                      pos,
+                      mismatches,
+                      static_cast<unsigned>(bench_seed::derive_seed("nearadapter")));
     auto reads = benchmark_util::loadReads(fq, readCount);
 
     Evaluator evaluator {nullptr};
@@ -338,8 +344,10 @@ static void BM_AdapterMatching_Legacy_Direct(benchmark::State& state) {
     const auto readCount  = static_cast<std::size_t>(state.range(0));
     const auto readLength = static_cast<std::size_t>(state.range(1));
 
+    const std::string tag =
+        std::format("legacy_direct_rr{}_len{}", readCount, readLength);
     auto fastq =
-        benchmark_util::makeAdapterPrefixFastq("legacy_direct", readCount, readLength, 1.0);
+        benchmark_util::makeAdapterPrefixFastq(tag, readCount, readLength, 1.0);
     auto reads = benchmark_util::loadReads(fastq, readCount);
 
     for (auto _ : state) {
@@ -358,7 +366,9 @@ static void BM_AdapterMatching_AhoCorasick_Direct(benchmark::State& state) {
     const auto readCount  = static_cast<std::size_t>(state.range(0));
     const auto readLength = static_cast<std::size_t>(state.range(1));
 
-    auto fastq = benchmark_util::makeAdapterPrefixFastq("ac_direct", readCount, readLength, 1.0);
+    const std::string tag =
+        std::format("ac_direct_rr{}_len{}", readCount, readLength);
+    auto fastq = benchmark_util::makeAdapterPrefixFastq(tag, readCount, readLength, 1.0);
     auto reads = benchmark_util::loadReads(fastq, readCount);
 
     // Warm up the automaton

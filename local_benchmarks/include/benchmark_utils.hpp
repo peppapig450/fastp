@@ -20,6 +20,7 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#include <format>
 
 #include "benchmark_data.hpp"
 #include "knownadapters.h"
@@ -134,8 +135,9 @@ template <Mutator MutatorFunction = NoopMutator>
                                                    MutatorFunction  sequenceMutator = {},
                                                    unsigned         randomSeed      = 69)
     -> std::expected<fs::path, std::string> {
-    auto outputPath =
-        workDir() / (std::string(filenameTag) + "_s" + std::to_string(randomSeed) + ".fastq");
+    auto outputPath = workDir() /
+                      std::format(
+                          "{}_rr{}_len{}_s{}.fastq", filenameTag, numReads, readLength, randomSeed);
     if (fs::exists(outputPath)) {
         return outputPath;
     }

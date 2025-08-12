@@ -1,6 +1,7 @@
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
+#include <format>
 #include <random>
 #include <string>
 #include <vector>
@@ -192,14 +193,15 @@ static void BM_AC_MatchKnown_Approximate(benchmark::State& state) {
 
     // Build reads with an adapter near-match (exact mismatches)
     // Use FASTQ generator (reuses helper that embeds adapter with mismatches)
-    const auto fq =
-        benchmark_util::makeNearAdapterFastq("microapprox",
-                                             n,
-                                             len,
-                                             pos,
-                                             mismatches,
-                                             static_cast<unsigned>(
-                                                 bench_seed::derive_seed("nearadapter")));
+    const std::string tag =
+        std::format("microapprox_pos{}_mm{}", pos, mismatches);
+    const auto fq = benchmark_util::makeNearAdapterFastq(
+        tag,
+        n,
+        len,
+        pos,
+        mismatches,
+        static_cast<unsigned>(bench_seed::derive_seed("nearadapter")));
     auto reads = benchmark_util::loadReads(fq, n);
 
     // Extract just sequences to call the function directly
