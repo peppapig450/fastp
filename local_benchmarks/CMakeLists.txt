@@ -113,7 +113,7 @@ endif()
 
 # Convenience targets
 add_custom_target(run_benchmark
-  COMMAND evaluator_benchmark --benchmark-format=json --benchmark_out=benchmark_results.json
+  COMMAND evaluator_benchmark --benchmark_format=json --benchmark_out=benchmark_results.json
   DEPENDS evaluator_benchmark
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   COMMENT "Running Google Benchmark and writing results to benchmark_results.json"
