@@ -120,9 +120,8 @@ static void BM_CheckKnownAdapters_LowComplexitySkip(benchmark::State& state) {
     const auto readCount  = static_cast<std::size_t>(state.range(0));
     const auto readLength = static_cast<std::size_t>(state.range(1));
 
-    const std::string tag =
-        std::format("skipLC_rr{}_len{}", readCount, readLength);
-    auto fastq =
+    const std::string tag = std::format("skipLC_rr{}_len{}", readCount, readLength);
+    auto              fastq =
         benchmark_util::makeLowComplexityFastq(tag,
                                                readCount,
                                                readLength,
@@ -148,15 +147,14 @@ static void BM_CheckKnownAdapters_AdapterPrefixDominant(benchmark::State& state)
     const auto readCount  = static_cast<std::size_t>(state.range(0));
     const auto readLength = static_cast<std::size_t>(state.range(1));
 
-    const std::string tag =
-        std::format("pref_rr{}_len{}", readCount, readLength);
-    auto fq               = benchmark_util::makeAdapterPrefixFastq(
-                      tag,
-                      readCount,
-                      readLength,
-                      /*prefix_prob=*/1.0,
-                      static_cast<unsigned>(bench_seed::derive_seed("adapterprefix")));
-    auto reads = benchmark_util::loadReads(fq, readCount);
+    const std::string tag   = std::format("pref_rr{}_len{}", readCount, readLength);
+    auto              fq    = benchmark_util::makeAdapterPrefixFastq(tag,
+                                                     readCount,
+                                                     readLength,
+                                                     /*prefix_prob=*/1.0,
+                                                     static_cast<unsigned>(
+                                                         bench_seed::derive_seed("adapterprefix")));
+    auto              reads = benchmark_util::loadReads(fq, readCount);
 
     Evaluator evaluator(nullptr);
     adapters::getAhoCorasickMatcher();
@@ -176,16 +174,15 @@ static void BM_CheckKnownAdapters_NearAdapterApprox(benchmark::State& state) {
     const auto pos        = static_cast<std::size_t>(state.range(2));
     const auto mismatches = static_cast<int>(state.range(3));
 
-    const std::string tag =
-        std::format("near_pos{}_mm{}", pos, mismatches);
-    auto fq               = benchmark_util::makeNearAdapterFastq(
-                      tag,
-                      readCount,
-                      readLength,
-                      pos,
-                      mismatches,
-                      static_cast<unsigned>(bench_seed::derive_seed("nearadapter")));
-    auto reads = benchmark_util::loadReads(fq, readCount);
+    const std::string tag   = std::format("near_pos{}_mm{}", pos, mismatches);
+    auto              fq    = benchmark_util::makeNearAdapterFastq(tag,
+                                                   readCount,
+                                                   readLength,
+                                                   pos,
+                                                   mismatches,
+                                                   static_cast<unsigned>(
+                                                       bench_seed::derive_seed("nearadapter")));
+    auto              reads = benchmark_util::loadReads(fq, readCount);
 
     Evaluator evaluator {nullptr};
     adapters::getAhoCorasickMatcher();
@@ -231,17 +228,12 @@ static void BM_CheckKnownAdapters_Legacy_Pure(benchmark::State& state) {
         for (const auto& read : reads) {
             const auto& seq = read->seq();
 
-            for (const auto& adapterPair : knownAdapters) {
-                const auto& adapter = adapterPair.first;
-
-                // Use the legacy matchKnown function (simple prefix matching)
-                auto matched = adapters::matchKnown(seq);
-                if (!matched.empty() && matched == adapter) {
-                    stats[adapter]++;
-                    if (stats[adapter] > bestHits) {
-                        bestHits    = stats[adapter];
-                        bestAdapter = adapter;
-                    }
+            auto matched = adapters::matchKnown(seq);
+            if (!matched.empty()) {
+                ++stats[matched];
+                if (stats[matched] > bestHits) {
+                    bestHits    = stats[matched];
+                    bestAdapter = matched;
                 }
             }
         }
@@ -304,9 +296,11 @@ static void BM_CheckKnownAdapters_Legacy_WithFiltering(benchmark::State& state) 
                                                        static_cast<int>(pos),
                                                        kKeyLen,
                                                        rolling);
-                    // Note: We can't access isLowComplexityKey directly, so we'll skip this
-                    // optimization This gives the legacy method a slight advantage in this
-                    // benchmark
+
+                    if (rolling >= 0 && isLowComplexityKey(rolling)) {
+                        shouldSkipRead = true;
+                        break;
+                    }
                 }
             }
 
@@ -315,15 +309,12 @@ static void BM_CheckKnownAdapters_Legacy_WithFiltering(benchmark::State& state) 
             }
 
             // Use legacy matching approach
-            for (const auto& adapterPair : knownAdapters) {
-                const auto& adapter = adapterPair.first;
-                auto        matched = adapters::matchKnown(seq);
-                if (!matched.empty() && matched == adapter) {
-                    stats[adapter]++;
-                    if (stats[adapter] > bestHits) {
-                        bestHits    = stats[adapter];
-                        bestAdapter = adapter;
-                    }
+            auto matched = adapters::matchKnown(seq);
+            if (!matched.empty()) {
+                ++stats[matched];
+                if (stats[matched] > bestHits) {
+                    bestHits    = stats[matched];
+                    bestAdapter = matched;
                 }
             }
         }
@@ -344,11 +335,9 @@ static void BM_AdapterMatching_Legacy_Direct(benchmark::State& state) {
     const auto readCount  = static_cast<std::size_t>(state.range(0));
     const auto readLength = static_cast<std::size_t>(state.range(1));
 
-    const std::string tag =
-        std::format("legacy_direct_rr{}_len{}", readCount, readLength);
-    auto fastq =
-        benchmark_util::makeAdapterPrefixFastq(tag, readCount, readLength, 1.0);
-    auto reads = benchmark_util::loadReads(fastq, readCount);
+    const std::string tag = std::format("legacy_direct_rr{}_len{}", readCount, readLength);
+    auto fastq            = benchmark_util::makeAdapterPrefixFastq(tag, readCount, readLength, 1.0);
+    auto reads            = benchmark_util::loadReads(fastq, readCount);
 
     for (auto _ : state) {
         for (const auto& read : reads) {
@@ -366,10 +355,9 @@ static void BM_AdapterMatching_AhoCorasick_Direct(benchmark::State& state) {
     const auto readCount  = static_cast<std::size_t>(state.range(0));
     const auto readLength = static_cast<std::size_t>(state.range(1));
 
-    const std::string tag =
-        std::format("ac_direct_rr{}_len{}", readCount, readLength);
-    auto fastq = benchmark_util::makeAdapterPrefixFastq(tag, readCount, readLength, 1.0);
-    auto reads = benchmark_util::loadReads(fastq, readCount);
+    const std::string tag = std::format("ac_direct_rr{}_len{}", readCount, readLength);
+    auto fastq            = benchmark_util::makeAdapterPrefixFastq(tag, readCount, readLength, 1.0);
+    auto reads            = benchmark_util::loadReads(fastq, readCount);
 
     // Warm up the automaton
     adapters::getAhoCorasickMatcher();
@@ -421,16 +409,12 @@ static void BM_CheckKnownAdapters_Legacy_ParamContam(benchmark::State& state) {
         for (const auto& read : reads) {
             const auto& seq = read->seq();
 
-            for (const auto& adapterPair : knownAdapters) {
-                const auto& adapter = adapterPair.first;
-                auto        matched = adapters::matchKnown(seq);
-                if (!matched.empty() && matched == adapter) {
-                    stats[adapter]++;
-                    if (stats[adapter] > bestHits) {
-                        bestHits    = stats[adapter];
-                        bestAdapter = adapter;
-                    }
-                    break;  // Found match, go to next read
+            auto matched = adapters::matchKnown(seq);
+            if (!matched.empty()) {
+                ++stats[matched];
+                if (stats[matched] > bestHits) {
+                    bestHits    = stats[matched];
+                    bestAdapter = matched;
                 }
             }
         }
@@ -446,50 +430,52 @@ static void BM_CheckKnownAdapters_Legacy_ParamContam(benchmark::State& state) {
     SetBenchmarkState(state, readCount, readLength);
 }
 
+// clang-format off
 // Legacy method benchmarks
 BENCHMARK(BM_CheckKnownAdapters_Legacy_Pure)
-    ->Args({50'000, 150})
-    ->Args({200'000, 150})
-    ->Args({50'000, 250});
+    ->Args({50000, 150})
+    ->Args({200000, 150})
+    ->Args({50000, 250});
 
 BENCHMARK(BM_CheckKnownAdapters_Legacy_WithFiltering)
-    ->Args({50'000, 150})
-    ->Args({200'000, 150});
+    ->Args({50000, 150})
+    ->Args({200000, 150});
 
 BENCHMARK(BM_CheckKnownAdapters_Legacy_ParamContam)
-    ->Args({50'000, 150,  50})   // 5% contam
-    ->Args({50'000, 150, 100})   // 10%
-    ->Args({50'000, 150, 300});  // 30%
+    ->Args({50000, 150,  50})   // 5% contam
+    ->Args({50000, 150, 100})   // 10%
+    ->Args({50000, 150, 300});  // 30%
 
 // Direct method comparison benchmarks
 BENCHMARK(BM_AdapterMatching_Legacy_Direct)
-    ->Args({10'000, 150})
-    ->Args({10'000, 250});
+    ->Args({10000, 150})
+    ->Args({10000, 250});
 
 BENCHMARK(BM_AdapterMatching_AhoCorasick_Direct)
-    ->Args({10'000, 150})
-    ->Args({10'000, 250});
+    ->Args({10000, 150})
+    ->Args({10000, 250});
 
 BENCHMARK(BM_CheckKnownAdapters_Current_Realistic)
-    ->Args({50'000, 150})
-    ->Args({200'000, 150})
-    ->Args({50'000, 250});
+    ->Args({50000, 150})
+    ->Args({200000, 150})
+    ->Args({50000, 250});
 
 BENCHMARK(BM_CheckKnownAdapters_ParamContam)
-    ->Args({50'000, 150,  50})   // 5% contam
-    ->Args({50'000, 150, 100})   // 10%
-    ->Args({50'000, 150, 300});  // 30%
+    ->Args({50000, 150,  50})   // 5% contam
+    ->Args({50000, 150, 100})   // 10%
+    ->Args({50000, 150, 300});  // 30%
 
 BENCHMARK(BM_CheckKnownAdapters_LowComplexitySkip)
-    ->Args({100'000, 150})
-    ->Args({100'000, 250});
+    ->Args({100000, 150})
+    ->Args({100000, 250});
 
 BENCHMARK(BM_CheckKnownAdapters_AdapterPrefixDominant)
-    ->Args({100'000, 75})
-    ->Args({100'000, 150});
+    ->Args({100000, 75})
+    ->Args({100000, 150});
 
 BENCHMARK(BM_CheckKnownAdapters_NearAdapterApprox)
-    ->Args({20'000, 150, 30,  1})   // near-perfect
-    ->Args({20'000, 150, 40,  2})   // small mismatch
-    ->Args({
-                                                                                                20'000, 150, 60,  3});  // heavier approximate
+    ->Args({20000, 150, 30,  1})   // near-perfect
+    ->Args({20000, 150, 40,  2})   // small mismatch
+    ->Args({20000, 150, 60,  3});  // heavier approximate
+
+// clang-format on
