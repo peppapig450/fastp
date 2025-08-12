@@ -1,23 +1,30 @@
 cmake_minimum_required(VERSION 3.16)
-project(evaluator_benchmark CXX)
 
-include(CTest)
+project(evaluator_benchmark
+  VERSION 0.1.0
+  LANGUAGES CXX)
 
-# Set language standard & build options
-set(CMAKE_CXX_STANDARD 23)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+include(CTest) # defines BUILD_TESTING option
 
-# Add your optimization and define flags
-add_compile_options(-O2 -DNDEBUG -pthread)
+option(ENABLE_IPO "Enable interprocedural optimization (LTO) if supported" ON)
+option(ENABLE_ASAN "Enable AddressSanitizer in Debug builds" OFF)
 
-# Include directory for your project headers
-include_directories(${CMAKE_SOURCE_DIR}/../src)
+# Sensible default build type if single-config generator (make/ninja)
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+endif()
 
-# Source files from ../src
-set(FASTP_SRCS
-    ../src/ahocorasick.h
+find_package(Threads REQUIRED)
+
+# Google Benchmark (system package)
+find_package(benchmark REQUIRED)
+
+# libisal via pkg-config
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(ISAL REQUIRED IMPORTED_TARGET libisal)
+
+# Core library made from your ../src files
+add_library(evaluator_core STATIC
     ../src/evaluator.cpp
     ../src/options.cpp
     ../src/read.cpp
@@ -29,68 +36,100 @@ set(FASTP_SRCS
     ../src/knownadapters.cpp
 )
 
-# Benchmark source(s)
-set(BENCHMARK_SRCS
-    evaluator_benchmark.cpp
-    adapter_benchmark.cpp
+# If headers in ../src are meant to be public, expose that include dir
+target_include_directories(evaluator_core
+  PUBLIC
+    ${CMAKE_CURRENT_LIST_DIR}/../src
 )
 
-# Combine all sources
-set(SRCS
-    ${FASTP_SRCS}
-    ${BENCHMARK_SRCS}
+# Use per-target C++ standard and warnings
+target_compile_features(evaluator_core PUBLIC cxx_std_23)
+
+# Warnings by compiler
+target_compile_options(evaluator_core
+  PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic>
+    $<$<CXX_COMPILER_ID:MSVC>:/W4 /permissive->
 )
 
-# Find Google Benchmark
-find_package(benchmark REQUIRED)
+# Config-specific optimization/defines (Release already adds NDEBUG)
+# Add any extra tuning flags here if you truly need them.
 
-# Find libisal
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(ISAL REQUIRED libisal)
-
-include_directories(${ISAL_INCLUDE_DIRS})
-link_directories(${ISAL_LIBRARY_DIRS})
-
-# Create executable
-add_executable(${PROJECT_NAME} ${SRCS})
-
-# Link Google Benchmark and pthread
-target_link_libraries(${PROJECT_NAME}
-    PRIVATE
-        benchmark
-        benchmark_main
-        pthread
-        ${ISAL_LIBRARIES}
-)
-
-if(BUILD_TESTING)
-    add_test(NAME evaluator_benchmark
-             COMMAND ${PROJECT_NAME} --benchmark_min_time=2.0s --benchmark_repetitions=1 --benchmark_report_aggregates_only=true)
+# Enable IPO/LTO if requested and supported
+if(ENABLE_IPO)
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT ipo_supported OUTPUT ipo_msg)
+  if(ipo_supported)
+    set_property(TARGET evaluator_core PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+  else()
+    message(STATUS "IPO not supported: ${ipo_msg}")
+  endif()
 endif()
 
-# Add custom targets for benchmark & profile (optional)
-add_custom_target(run_benchmark
-    COMMAND ${PROJECT_NAME} --benchmark-format=json --benchmark_out=benchmark_results.json
-    DEPENDS ${PROJECT_NAME}
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-    COMMENT "Running Google Benchmark and writing results to benchmark_results.json"
+# -------- Benchmark executable
+add_executable(evaluator_benchmark
+    evaluator_benchmark.cpp
+    adapter_benchmark.cpp
+    ../src/ahocorasick.h
 )
 
-add_custom_target(profile_benchmark
-    COMMAND perf record -g --call-graph=dwarf -- ${PROJECT_NAME} --benchmark_min_time=10s
-    DEPENDS ${PROJECT_NAME}
+target_link_libraries(evaluator_benchmark
+  PRIVATE
+    evaluator_core
+    benchmark::benchmark
+    benchmark::benchmark_main
+    Threads::Threads
+    PkgConfig::ISAL
+)
+
+# If you have private includes for the benchmark itself:
+target_include_directories(evaluator_benchmark PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+# AddressSanitizer opt-in for Debug builds
+if(ENABLE_ASAN)
+  target_compile_options(evaluator_benchmark PRIVATE
+    $<$<AND:$<CONFIG:Debug>,$<CXX_COMPILER_ID:GNU,Clang,AppleClang>>:-fsanitize=address -fno-omit-frame-pointer>)
+  target_link_options(evaluator_benchmark PRIVATE
+    $<$<AND:$<CONFIG:Debug>,$<CXX_COMPILER_ID:GNU,Clang,AppleClang>>:-fsanitize=address>)
+endif()
+
+# Tests (via CTest)
+if(BUILD_TESTING)
+  add_test(NAME evaluator_benchmark
+           COMMAND evaluator_benchmark
+                   --benchmark_min_time=2.0s
+                   --benchmark_repetitions=1
+                   --benchmark_report_aggregates_only=true)
+endif()
+
+# Convenience targets
+add_custom_target(run_benchmark
+  COMMAND evaluator_benchmark --benchmark-format=json --benchmark_out=benchmark_results.json
+  DEPENDS evaluator_benchmark
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  COMMENT "Running Google Benchmark and writing results to benchmark_results.json"
+)
+
+if(UNIX AND NOT APPLE) # Linux perf
+  add_custom_target(profile_benchmark
+    COMMAND perf record -g --call-graph=dwarf -- $<TARGET_FILE:evaluator_benchmark> --benchmark_min_time=10s
+    DEPENDS evaluator_benchmark
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Profiling benchmark with perf"
-)
+  )
+endif()
 
 file(GLOB BENCHMARK_HEADERS CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp")
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp")
 
-add_library(header_compile_dummy OBJECT ${BENCHMARK_HEADERS})
-set_source_files_properties(${BENCHMARK_HEADERS}
-    PROPERTIES
-        LANGUAGE CXX
-        HEADER_FILE_ONLY OFF)
-
-target_include_directories(header_compile_dummy PRIVATE
+if(BENCHMARK_HEADERS)
+  add_library(header_headers INTERFACE)
+  target_sources(header_headers INTERFACE ${BENCHMARK_HEADERS})
+  target_include_directories(header_headers INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
+endif()
+
+# Generate compile_commands.json
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
