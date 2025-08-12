@@ -22,6 +22,7 @@ find_package(benchmark REQUIRED)
 # libisal via pkg-config
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(ISAL REQUIRED IMPORTED_TARGET libisal)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 # Core library made from your ../src files
 add_library(evaluator_core STATIC
@@ -110,6 +111,14 @@ add_custom_target(run_benchmark
   DEPENDS evaluator_benchmark
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   COMMENT "Running Google Benchmark and writing results to benchmark_results.json"
+)
+
+add_custom_target(check_benchmarks
+  COMMAND evaluator_benchmark --benchmark-format=json --benchmark_out=benchmark_results.json
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/compare_benchmarks.py --tolerance=5 ${CMAKE_CURRENT_SOURCE_DIR}/benchmark_baseline.json benchmark_results.json
+  DEPENDS evaluator_benchmark
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  COMMENT "Run benchmark and compare against baseline"
 )
 
 if(UNIX AND NOT APPLE) # Linux perf
