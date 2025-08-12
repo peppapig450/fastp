@@ -463,8 +463,7 @@ private:
         constexpr double cProb = gProb + (gcContent / 2.0);  // 0.42
         constexpr double aProb = cProb + (atContent / 2.0);  // 0.71
 
-        const unsigned int rngSeed =
-            static_cast<unsigned>(bench_seed::derive_seed("reference_genome"));
+        const auto rngSeed = bench_seed::derive_seed_as<std::uint64_t>("reference_genome");
 
         auto refPath = workDir_ / (tag + "_reference.fasta");
         if (!fs::exists(refPath)) {
@@ -572,8 +571,8 @@ private:
                 << " --seq-technology illumina"
                 << " --illumina-read-length " << readLength
                 << " --num-threads " << cpu_count_ << ' '
-                << " --seed " << bench_seed::derive_seed("mason_sim")
-                << " --seed-spacing " << 997 << ' ';
+                << " --seed " << bench_seed::derive_seed_int32_nonneg("mason_sim")
+                << ' ';
             // clang-format on
 
             cmd << " --fragment-size-model " << fragmentConfig.model;
@@ -631,8 +630,7 @@ private:
     auto addAdapterContamination(const std::string& cleanFastq,
                                  double             contamRate,
                                  const std::string& suffix) -> std::string {
-        const unsigned contamSeed =
-            static_cast<unsigned>(bench_seed::derive_seed("contaminate_SE"));
+        const auto contamSeed = bench_seed::derive_seed_int32_nonneg("contaminate_SE");
 
         auto outputPath = workDir_ / ("contaminated_" + suffix + ".fastq");
         auto input      = openFile<std::ifstream>(cleanFastq);
@@ -651,10 +649,8 @@ private:
         auto outR1 = workDir_ / ("contaminated_" + suffix + "_R1.fastq");
         auto outR2 = workDir_ / ("contaminated_" + suffix + "_R2.fastq");
 
-        const unsigned contamSeedR1 =
-            static_cast<unsigned>(bench_seed::derive_seed("contaminate_PE", 0));
-        const unsigned contamSeedR2 =
-            static_cast<unsigned>(bench_seed::derive_seed("contaminate_PE", 1));
+        const auto contamSeedR1 = bench_seed::derive_seed_int32_nonneg("contaminate_PE", 0);
+        const auto contamSeedR2 = bench_seed::derive_seed_int32_nonneg("contaminate_PE", 1);
 
         contamOneFile(cleanR1, outR1.string(), contamRate, contamSeedR1);
         contamOneFile(cleanR2, outR2.string(), contamRate, contamSeedR2);
@@ -666,9 +662,8 @@ private:
     void generateFallbackReads(const std::string& outputPath,
                                std::size_t        numReads,
                                std::size_t        readLength) {
-        const unsigned randomSeed =
-            static_cast<unsigned>(bench_seed::derive_seed("fallback_reads"));
-        constexpr std::array<char, 4> bases = {'A', 'T', 'G', 'C'};
+        const auto                    randomSeed = bench_seed::derive_seed("fallback_reads");
+        constexpr std::array<char, 4> bases      = {'A', 'T', 'G', 'C'};
 
         std::ofstream out(outputPath);
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <concepts>
 #include <cstdint>
 #include <cstdlib>
 #include <random>
@@ -79,41 +80,113 @@ constexpr std::uint64_t DERIVATION_SALT = 0x6a09e667f3bcc909ULL;
 }
 
 /**
- * Creates a properly seeded Mersenne Twister generator.
- *
- * The generator is seeded using a high-entropy seed_seq constructed from
- * the derived 64-bit seed to ensure proper initialization of the MT's
- * internal state.
- *
- * @param label String identifier for reproducible seeding
- * @param stream_id Optional stream identifier for multiple generators
- * @return Fully initialized MT19937 generator
+ * Fold/mix a 64-bit seed down to a smaller unsigned type using xor-folding.
+ * This keeps good bit dispersion without call-site casts.
  */
-[[nodiscard]] inline auto make_generator(std::string_view label, std::uint64_t stream_id = 0)
-    -> std::mt19937 {
-    const auto seed = derive_seed(label, stream_id);
-
-    // Split 64-bit seed into 32-bit words for proper seed_seq initialization
-    const std::array<std::uint32_t, 2> seed_words {
-        {static_cast<std::uint32_t>(seed), static_cast<std::uint32_t>(seed >> 32UL)}};
-
-    std::seed_seq sequence(seed_words.begin(), seed_words.end());
-    return std::mt19937 {sequence};
+template <std::unsigned_integral UInt>
+[[nodiscard]] constexpr auto fold_seed_to(std::uint64_t source) noexcept -> UInt {
+    if constexpr (sizeof(UInt) >= sizeof(std::uint64_t)) {
+        // Zero-extend if the target is 64-bit or wider
+        return static_cast<UInt>(source);
+    } else if constexpr (sizeof(UInt) == 4) {
+        auto folded  = splitmix64(source);
+        folded      ^= (folded >> 32ULL);
+        return static_cast<UInt>(folded);
+    } else if constexpr (sizeof(UInt) == 2) {
+        auto folded  = splitmix64(source);
+        folded      ^= (folded >> 32ULL);
+        folded      ^= (folded >> 16ULL);
+        return static_cast<UInt>(folded);
+    } else {  // sizeof(Uint) == 1
+        auto folded  = splitmix64(source);
+        folded      ^= (folded >> 32ULL);
+        folded      ^= (folded >> 16ULL);
+        folded      ^= (folded >> 8ULL);
+        return static_cast<UInt>(folded);
+    }
 }
 
 /**
- * Creates a generator for an explicit numeric seed (primarily for testing)
- *
- * @param explicit_seed Direct 64-bit seed value
- * @return Seeded MT19937 generator
+ * Derive a seed directly as the unsigned type you want.
+ * Example: auto s32 = derive_seed_as<std::uint32_t>("foo");
  */
-[[nodiscard]] inline auto make_generator(std::uint64_t explicit_seed) -> std::mt19937 {
-    const std::array<std::uint32_t, 2> seed_words {
-        {static_cast<std::uint32_t>(explicit_seed),
-         static_cast<std::uint32_t>(explicit_seed >> 32UL)}};
+template <std::unsigned_integral UInt = std::uint64_t>
+[[nodiscard]] inline auto derive_seed_as(std::string_view label,
+                                         std::uint64_t    stream_id = 0) noexcept -> UInt {
+    return fold_seed_to<UInt>(derive_seed(label, stream_id));
+}
 
-    std::seed_seq sequence(seed_words.begin(), seed_words.end());
-    return std::mt19937 {sequence};
+/**
+ * Helper: expand a 64-bit seed into multiple 32-bit words via SplitMix64.
+ * Supplying more than two words gives seed_seq more entropy to spread
+ * across engine state (works for both 32- and 64-bit Mersenne Twister variants).
+ */
+[[nodiscard]] inline auto expand_seed_to_u32_words(std::uint64_t base_seed) noexcept
+    -> std::array<std::uint32_t, 4> {
+    std::array<std::uint32_t, 4> words {};
+    std::uint64_t                state = base_seed;
+
+    // Two SplitMix64 outputs => 4x32-bit words
+    state    = splitmix64(state);
+    words[0] = static_cast<std::uint32_t>(state);
+    words[1] = static_cast<std::uint32_t>(state >> 32ULL);
+
+    state    = splitmix64(state);
+    words[2] = static_cast<std::uint32_t>(state);
+    words[3] = static_cast<std::uint32_t>(state >> 32ULL);
+
+    return words;
+}
+
+/**
+ * Creates a properly seeded random engine (templated).
+ *
+ * Default is std::mt19937, but you can pick std::mt19937_64 or any
+ * std::uniform_random_bit_generator-compatible engine.
+ *
+ * Example:
+ *   auto rng32 = make_generator<>("bench", 0);                // std::mt19937
+ *   auto rng64 = make_generator<std::mt19937_64>("bench", 0); // 64-bit MT
+ */
+template <std::uniform_random_bit_generator Engine = std::mt19937>
+[[nodiscard]] inline auto make_generator(std::string_view label, std::uint64_t stream_id = 0)
+    -> Engine {
+    const auto seed64 = derive_seed(label, stream_id);
+    const auto words  = expand_seed_to_u32_words(seed64);
+
+    std::seed_seq seq {words.begin(), words.end()};
+    return Engine {seq};
+}
+
+/**
+ * Creates a generator from an explicit numeric seed (templated).
+ */
+template <std::uniform_random_bit_generator Engine = std::mt19937>
+[[nodiscard]] inline auto make_generator(std::uint64_t explicit_seed) -> Engine {
+    const auto words = expand_seed_to_u32_words(explicit_seed);
+
+    std::seed_seq seq {words.begin(), words.end()};
+    return Engine {seq};
+}
+
+// These helpers are only necessary because mason2 only accepts signed 32-bit integers as seeds
+// this is rather quirky, so we just mask off the sign bit so we can avoid rewriting the template
+// that casts to an unsigned type.
+// Upstream issue: https://github.com/seqan/seqan/issues/2570
+[[nodiscard]] inline auto derive_seed_int32_nonneg(std::string_view label,
+                                                   std::uint64_t    stream_id = 0) noexcept
+    -> std::int32_t {
+    const auto u32 = derive_seed_as<std::uint32_t>(label, stream_id);
+    // Mask off sign bit so result ∈ [0, INT_MAX]; deterministic + reproducible.
+    return static_cast<std::int32_t>(u32 & 0x7fffffffU);
+}
+
+// Convenience: make a Mason-friendly seed from an explicit 64-bit seed.
+[[nodiscard]] inline auto fold_explicit_seed_to_int32(std::uint64_t seed64,
+                                                      bool          non_negative = true) noexcept
+    -> std::int32_t {
+    const auto u32 = fold_seed_to<std::uint32_t>(seed64);
+    return static_cast<std::int32_t>(non_negative ? (u32 & 0x7fffffffU) : u32);
 }
 
 }  // namespace bench_seed
