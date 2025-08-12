@@ -57,17 +57,23 @@ target_compile_options(evaluator_core
 # Add any extra tuning flags here if you truly need them.
 
 # Enable IPO/LTO if requested and supported
-if(ENABLE_IPO)
+option(ENABLE_IPO_CORE "Enable LTO for evaluator_core" OFF)
+option(ENABLE_IPO_BENCH "Enable LTO for evaluator_benchmark" OFF)
+
+if(ENABLE_IPO_CORE OR ENABLE_IPO_BENCH)
   include(CheckIPOSupported)
   check_ipo_supported(RESULT ipo_supported OUTPUT ipo_msg)
-  if(ipo_supported)
-    set_property(TARGET evaluator_core PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
-  else()
-    message(STATUS "IPO not supported: ${ipo_msg}")
-  endif()
 endif()
 
-# -------- Benchmark executable
+if(ENABLE_IPO_CORE AND ipo_supported)
+  set_property(TARGET evaluator_core PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
+
+if(ENABLE_IPO_BENCH AND ipo_supported)
+  set_property(TARGET evaluator_benchmark PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
+
+# Benchmark executable
 add_executable(evaluator_benchmark
     evaluator_benchmark.cpp
     adapter_benchmark.cpp
