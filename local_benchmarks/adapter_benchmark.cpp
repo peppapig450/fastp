@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "include/bench_seed.hpp"
 #include "include/benchmark_utils.hpp"
 #include "knownadapters.h"
 
@@ -20,10 +21,7 @@ static auto makeSequences(std::size_t n,
     seqs.reserve(n);
 
     // choose a representative adapter
-    const auto& known = adapters::getKnown();
-    auto it = std::ranges::max_element(known, {}, [](auto& pair) { return pair.first.size(); });
-
-    const std::string adapter = (it == known.end()) ? "AGATCGGAAGAGCACACGTCT" : it->first;
+    const std::string adapter = benchmark_util::pickLongestAdapter();
 
     std::uniform_real_distribution<double> u(0.0, 1.0);
 
@@ -47,7 +45,12 @@ static void BM_AC_FindFirstAdapter_Prefix(benchmark::State& state) {
     const auto n   = static_cast<std::size_t>(state.range(0));
     const auto len = static_cast<std::size_t>(state.range(1));
 
-    auto seqs = makeSequences(n, len, /*include_adapter=*/true, /*pos=*/0, /*fraction=*/1.0);
+    auto seqs = makeSequences(n,
+                              len,
+                              /*include_adapter=*/true,
+                              /*pos=*/0,
+                              /*fraction=*/1.0,
+                              static_cast<unsigned>(bench_seed::derive_seed("BM_AC_Prefix")));
     adapters::getAhoCorasickMatcher();
 
     std::size_t hits = 0;
@@ -69,7 +72,12 @@ static void BM_Legacy_MatchKnown_Prefix(benchmark::State& state) {
     const auto n   = static_cast<std::size_t>(state.range(0));
     const auto len = static_cast<std::size_t>(state.range(1));
 
-    auto seqs = makeSequences(n, len, /*include_adapter=*/true, /*pos=*/0, /*fraction=*/1.0);
+    auto seqs = makeSequences(n,
+                              len,
+                              /*include_adapter=*/true,
+                              /*pos=*/0,
+                              /*fraction=*/1.0,
+                              static_cast<unsigned>(bench_seed::derive_seed("BM_Legacy_Prefix")));
 
     std::size_t hits   = 0;
     std::size_t misses = 0;
@@ -94,7 +102,13 @@ static void BM_AC_MatchKnown_Prefix(benchmark::State& state) {
     const auto n   = static_cast<std::size_t>(state.range(0));
     const auto len = static_cast<std::size_t>(state.range(1));
 
-    auto seqs = makeSequences(n, len, /*include_adapter=*/true, /*pos=*/0, /*fraction=*/1.0);
+    auto seqs =
+        makeSequences(n,
+                      len,
+                      /*include_adapter=*/true,
+                      /*pos=*/0,
+                      /*fraction=*/1.0,
+                      static_cast<unsigned>(bench_seed::derive_seed("BM_AC_MatchKnown_Prefix")));
     adapters::getAhoCorasickMatcher();
 
     std::size_t hits   = 0;
@@ -120,7 +134,12 @@ static void BM_AC_FindFirstAdapter_NoMatch(benchmark::State& state) {
     const auto n   = static_cast<std::size_t>(state.range(0));
     const auto len = static_cast<std::size_t>(state.range(1));
 
-    auto seqs = makeSequences(n, len, /*include_adapter=*/false);
+    auto seqs = makeSequences(n,
+                              len,
+                              /*include_adapter=*/false,
+                              /*pos=*/0,
+                              /*fraction=*/1.0,
+                              static_cast<unsigned>(bench_seed::derive_seed("BM_AC_NoMatch")));
     adapters::getAhoCorasickMatcher();
 
     std::size_t misses = 0;
@@ -143,7 +162,12 @@ static void BM_AC_MatchKnown_Exact_Mid(benchmark::State& state) {
     const auto len = static_cast<std::size_t>(state.range(1));
     const auto pos = static_cast<std::size_t>(state.range(2));
 
-    auto seqs = makeSequences(n, len, /*include_adapter=*/true, pos, /*fraction=*/1.0);
+    auto seqs = makeSequences(n,
+                              len,
+                              /*include_adapter=*/true,
+                              pos,
+                              /*fraction=*/1.0,
+                              static_cast<unsigned>(bench_seed::derive_seed("BM_AC_Exact_Mid")));
     adapters::getAhoCorasickMatcher();
 
     std::size_t total = 0;
@@ -168,8 +192,15 @@ static void BM_AC_MatchKnown_Approximate(benchmark::State& state) {
 
     // Build reads with an adapter near-match (exact mismatches)
     // Use FASTQ generator (reuses helper that embeds adapter with mismatches)
-    const auto fq    = benchmark_util::makeNearAdapterFastq("microapprox", n, len, pos, mismatches);
-    auto       reads = benchmark_util::loadReads(fq, n);
+    const auto fq =
+        benchmark_util::makeNearAdapterFastq("microapprox",
+                                             n,
+                                             len,
+                                             pos,
+                                             mismatches,
+                                             static_cast<unsigned>(
+                                                 bench_seed::derive_seed("nearadapter")));
+    auto reads = benchmark_util::loadReads(fq, n);
 
     // Extract just sequences to call the function directly
     std::vector<std::string> seqs;

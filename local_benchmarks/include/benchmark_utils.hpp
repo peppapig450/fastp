@@ -98,42 +98,33 @@ inline auto randSeq(std::size_t sequenceLength, std::mt19937& randomGenerator) -
     return sequence;
 }
 
-inline auto pickLongestAdapter() -> std::string {
-    const auto& adapters = adapters::getKnown();
-    auto        longestAdapterIterator =
-        std::ranges::max_element(adapters, {}, [](auto const& adapterPair) {
-            return adapterPair.first.size();
-        });
+inline auto sortedAdapterKeys() -> std::vector<std::string> {
+    auto adapterKeys =
+        adapters::getKnown() | std::views::keys | std::ranges::to<std::vector<std::string>>();
 
-    if (longestAdapterIterator == std::ranges::end(adapters)) {
+    std::ranges::sort(adapterKeys, {}, [](const std::string& adapter) {
+        return std::pair {adapter.size(), adapter};
+    });
+
+    return adapterKeys;
+}
+
+inline auto pickLongestAdapter() -> std::string {
+    auto adapters = sortedAdapterKeys();
+    if (adapters.empty()) {
         throw std::runtime_error("No known adapters available");
     }
 
-    return longestAdapterIterator->first;  // copy key string
+    return adapters.back();  // copy key string
 }
 
 inline auto pickMedianAdapter() -> std::string {
-    const auto& adapters = adapters::getKnown();
-    if (std::ranges::empty(adapters)) {
+    auto adapters = sortedAdapterKeys();
+    if (adapters.empty()) {
         throw std::runtime_error("No known adapters available");
     }
 
-    std::vector<std::string_view> adapterKeys;
-    adapterKeys.reserve(std::ranges::size(adapters));
-
-    for (const auto& [key, value] : adapters) {
-        adapterKeys.push_back(key);
-    }
-
-    // We take a signed midpoint and an iterator advanced by that signed difference
-    const auto midpoint       = std::ranges::ssize(adapterKeys) / 2;
-    const auto medianIterator = std::next(adapterKeys.begin(), midpoint);
-
-    std::ranges::nth_element(adapterKeys, medianIterator, {}, [](std::string_view adapterSequence) {
-        return adapterSequence.size();
-    });
-
-    return std::string(adapterKeys[static_cast<std::size_t>(midpoint)]);
+    return adapters[adapters.size() / 2];
 }
 
 template <Mutator MutatorFunction = NoopMutator>
@@ -143,7 +134,8 @@ template <Mutator MutatorFunction = NoopMutator>
                                                    MutatorFunction  sequenceMutator = {},
                                                    unsigned         randomSeed      = 69)
     -> std::expected<fs::path, std::string> {
-    auto outputPath = workDir() / (std::string(filenameTag) + ".fastq");
+    auto outputPath =
+        workDir() / (std::string(filenameTag) + "_s" + std::to_string(randomSeed) + ".fastq");
     if (fs::exists(outputPath)) {
         return outputPath;
     }
@@ -201,27 +193,24 @@ template <Mutator MutatorFunction = NoopMutator>
                                                     std::size_t      readLength,
                                                     std::size_t      homopolymerRunStart  = 24,
                                                     std::size_t      homopolymerRunLength = 40,
-                                                    char             homopolymerBase      = 'G')
+                                                    char             homopolymerBase      = 'G',
+                                                    unsigned         randomSeed           = 69)
     -> std::expected<fs::path, std::string> {
-    return writeFastqWithMutatorTry(std::string("lowcomplex_") + std::string(filenameTag),
-                                    numReads,
-                                    readLength,
-                                    [=](std::string& sequence,
-                                        std::string& /*quality*/,
-                                        std::mt19937& /*randomGenerator*/) {
-                                        if (readLength > homopolymerRunStart) {
-                                            const auto actualRunLength =
-                                                std::min(homopolymerRunLength,
-                                                         readLength - homopolymerRunStart);
+    return writeFastqWithMutatorTry(
+        std::string("lowcomplex_") + std::string(filenameTag),
+        numReads,
+        readLength,
+        [=](std::string& sequence, std::string& /*quality*/, std::mt19937& /*randomGenerator*/) {
+            if (readLength > homopolymerRunStart) {
+                const auto actualRunLength =
+                    std::min(homopolymerRunLength, readLength - homopolymerRunStart);
 
-                                            auto* sequenceStartPtr =
-                                                sequence.data() + homopolymerRunStart;
+                auto* sequenceStartPtr = sequence.data() + homopolymerRunStart;
 
-                                            std::fill_n(sequenceStartPtr,
-                                                        actualRunLength,
-                                                        homopolymerBase);
-                                        }
-                                    });
+                std::fill_n(sequenceStartPtr, actualRunLength, homopolymerBase);
+            }
+        },
+        randomSeed);
 }
 
 [[nodiscard]] inline auto makeLowComplexityFastq(std::string_view filenameTag,
@@ -229,13 +218,15 @@ template <Mutator MutatorFunction = NoopMutator>
                                                  std::size_t      readLength,
                                                  std::size_t      homopolymerRunStart  = 24,
                                                  std::size_t      homopolymerRunLength = 40,
-                                                 char homopolymerBase = 'G') -> fs::path {
+                                                 char             homopolymerBase      = 'G',
+                                                 unsigned         randomSeed = 69) -> fs::path {
     if (auto result = makeLowComplexityFastqTry(filenameTag,
                                                 numReads,
                                                 readLength,
                                                 homopolymerRunStart,
                                                 homopolymerRunLength,
-                                                homopolymerBase);
+                                                homopolymerBase,
+                                                randomSeed);
         result) {
         return *result;
     } else {

@@ -18,6 +18,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "bench_seed.hpp"
 #include "evaluator.h"
 #include "fastqreader.h"
 #include "fragment_config.hpp"
@@ -236,7 +237,7 @@ void applyAdapterContamination(std::string&     sequence,
 void contaminateStream(std::istream& input,
                        std::ostream& output,
                        double        contamRate,
-                       unsigned int  rngSeed = 669) {
+                       unsigned int  rngSeed) {
     const auto adapterSeqs = getAdapterSequences();
 
     std::mt19937                           rng(rngSeed);
@@ -279,10 +280,13 @@ auto openFile(const std::string& path) -> StreamType {
     return file;
 }
 
-void contamOneFile(const std::string& inFastq, const std::string& outFastq, double contamRate) {
+void contamOneFile(const std::string& inFastq,
+                   const std::string& outFastq,
+                   double             contamRate,
+                   unsigned int       rngSeed) {
     auto input  = openFile<std::ifstream>(inFastq);
     auto output = openFile<std::ofstream>(outFastq);
-    contaminateStream(input, output, contamRate);
+    contaminateStream(input, output, contamRate, rngSeed);
 }
 
 // Helper function for running a command
@@ -459,7 +463,8 @@ private:
         constexpr double cProb = gProb + (gcContent / 2.0);  // 0.42
         constexpr double aProb = cProb + (atContent / 2.0);  // 0.71
 
-        constexpr unsigned int rngSeed = 420;
+        const unsigned int rngSeed =
+            static_cast<unsigned>(bench_seed::derive_seed("reference_genome"));
 
         auto refPath = workDir_ / (tag + "_reference.fasta");
         if (!fs::exists(refPath)) {
@@ -566,7 +571,9 @@ private:
                 << " -n "  << numReads
                 << " --seq-technology illumina"
                 << " --illumina-read-length " << readLength
-                << " --num-threads " << cpu_count_ << ' ';
+                << " --num-threads " << cpu_count_ << ' '
+                << " --seed " << bench_seed::derive_seed("mason_sim")
+                << " --seed-spacing " << 997 << ' ';
             // clang-format on
 
             cmd << " --fragment-size-model " << fragmentConfig.model;
@@ -624,13 +631,14 @@ private:
     auto addAdapterContamination(const std::string& cleanFastq,
                                  double             contamRate,
                                  const std::string& suffix) -> std::string {
-        constexpr int randomSeed = 666;
+        const unsigned contamSeed =
+            static_cast<unsigned>(bench_seed::derive_seed("contaminate_SE"));
 
         auto outputPath = workDir_ / ("contaminated_" + suffix + ".fastq");
         auto input      = openFile<std::ifstream>(cleanFastq);
         auto output     = openFile<std::ofstream>(outputPath);
 
-        contaminateStream(input, output, contamRate, randomSeed);
+        contaminateStream(input, output, contamRate, contamSeed);
         return outputPath.string();
     }
 
@@ -643,8 +651,13 @@ private:
         auto outR1 = workDir_ / ("contaminated_" + suffix + "_R1.fastq");
         auto outR2 = workDir_ / ("contaminated_" + suffix + "_R2.fastq");
 
-        contamOneFile(cleanR1, outR1.string(), contamRate);
-        contamOneFile(cleanR2, outR2.string(), contamRate);
+        const unsigned contamSeedR1 =
+            static_cast<unsigned>(bench_seed::derive_seed("contaminate_PE", 0));
+        const unsigned contamSeedR2 =
+            static_cast<unsigned>(bench_seed::derive_seed("contaminate_PE", 1));
+
+        contamOneFile(cleanR1, outR1.string(), contamRate, contamSeedR1);
+        contamOneFile(cleanR2, outR2.string(), contamRate, contamSeedR2);
 
         return {outR1.string(), outR2.string()};
     }
@@ -653,8 +666,9 @@ private:
     void generateFallbackReads(const std::string& outputPath,
                                std::size_t        numReads,
                                std::size_t        readLength) {
-        constexpr int                 randomSeed = 69420;
-        constexpr std::array<char, 4> bases      = {'A', 'T', 'G', 'C'};
+        const unsigned randomSeed =
+            static_cast<unsigned>(bench_seed::derive_seed("fallback_reads"));
+        constexpr std::array<char, 4> bases = {'A', 'T', 'G', 'C'};
 
         std::ofstream out(outputPath);
 
@@ -692,15 +706,16 @@ auto MasonDataGenerator::generateDatasetImpl(const std::string& name,
                                              bool               withVariants,
                                              std::string_view   refFasta)
     -> DatasetReturn<IsPairedEnd> {
+    const auto seedTag = std::format("{}_s{}", name, bench_seed::get_base_seed());
     // Check if output already exists
     if constexpr (IsPairedEnd) {
-        const auto r1Out = workDir_ / (name + "_R1.fastq");
-        const auto r2Out = workDir_ / (name + "_R2.fastq");
+        const auto r1Out = workDir_ / (seedTag + "_R1.fastq");
+        const auto r2Out = workDir_ / (seedTag + "_R2.fastq");
         if (fs::exists(r1Out) && fs::exists(r2Out)) {
             return std::make_pair(r1Out.string(), r2Out.string());
         }
     } else {
-        const auto outputPath = workDir_ / (name + ".fastq");
+        const auto outputPath = workDir_ / (seedTag + ".fastq");
         if (fs::exists(outputPath)) {
             return outputPath.string();
         }
