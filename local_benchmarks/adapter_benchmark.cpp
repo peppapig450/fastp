@@ -37,7 +37,7 @@ auto loadReadsOrSkip(benchmark::State&  state,
 }
 
 // Build a synthetic corpus of sequences, optionally with an adapter at position p
-static auto makeSequences(std::size_t n,
+ auto makeSequences(std::size_t n,
                           std::size_t len,
                           bool        include_adapter,
                           std::size_t pos      = 0,
@@ -66,6 +66,7 @@ static auto makeSequences(std::size_t n,
     }
     return seqs;
 }
+}  // namespace
 
 // Exact first-match search with adapter at prefix (position 0) -> early exit expected
 static void BM_AC_FindFirstAdapter_Prefix(benchmark::State& state) {
@@ -219,14 +220,13 @@ static void BM_AC_MatchKnown_Approximate(benchmark::State& state) {
 
     // Build reads with an adapter near-match (exact mismatches)
     // Use FASTQ generator (reuses helper that embeds adapter with mismatches)
-    const std::string tag =
-        std::format("microapprox_pos{}_mm{}", pos, mismatches);
-    const auto fq = benchmark_util::makeNearAdapterFastq(
-        tag,
-        n,
-        len,
-        pos,
-        mismatches,
+    const std::string tag = std::format("microapprox_pos{}_mm{}", pos, mismatches);
+    const auto        fq =
+        benchmark_util::makeNearAdapterFastq(tag,
+                                             n,
+                                             len,
+                                             pos,
+                                             mismatches,
                                              static_cast<unsigned>(
                                                  bench_seed::derive_seed("nearadapter")));
     auto& generator = benchmark_data::getGenerator();
@@ -280,4 +280,4 @@ BENCHMARK(BM_AC_MatchKnown_Approximate)
     ->Args({10'000, 150, 40, 1, 8})
     ->Args({10'000, 150, 60, 2, 10})
     ->Args({10'000, 250, 80, 3, 12});
-                                                    // clang-format on
+// clang-format on

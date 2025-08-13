@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <format>
+#include <memory>
 #include <source_location>
 #include <string>
 
@@ -183,8 +184,8 @@ static void BM_CheckKnownAdapters_AdapterPrefixDominant(benchmark::State& state)
     const auto readCount  = static_cast<std::size_t>(state.range(0));
     const auto readLength = static_cast<std::size_t>(state.range(1));
 
-    const std::string tag   = std::format("pref_rr{}_len{}", readCount, readLength);
-    auto              fq    = benchmark_util::makeAdapterPrefixFastq(tag,
+    const std::string tag = std::format("pref_rr{}_len{}", readCount, readLength);
+    auto              fq  = benchmark_util::makeAdapterPrefixFastq(tag,
                                                      readCount,
                                                      readLength,
                                                      /*prefix_prob=*/1.0,
@@ -215,8 +216,8 @@ static void BM_CheckKnownAdapters_NearAdapterApprox(benchmark::State& state) {
     const auto pos        = static_cast<std::size_t>(state.range(2));
     const auto mismatches = static_cast<int>(state.range(3));
 
-    const std::string tag   = std::format("near_pos{}_mm{}", pos, mismatches);
-    auto              fq    = benchmark_util::makeNearAdapterFastq(tag,
+    const std::string tag       = std::format("near_pos{}_mm{}", pos, mismatches);
+    auto              fq        = benchmark_util::makeNearAdapterFastq(tag,
                                                    readCount,
                                                    readLength,
                                                    pos,
@@ -330,7 +331,7 @@ static void BM_CheckKnownAdapters_Legacy_WithFiltering(benchmark::State& state) 
 
         int                   bestHits = 0;
         std::string           bestAdapter;
-        constexpr int         kKeyLen   = 8;
+        constexpr int         kKeyLen   = 10;
         constexpr std::size_t kStartPos = 20;
 
         for (const auto& read : reads) {
@@ -398,10 +399,13 @@ static void BM_AdapterMatching_Legacy_Direct(benchmark::State& state) {
 
     for (auto _ : state) {
         for (const auto& read : reads) {
-            const auto& seq    = read->seq();
-            auto        result = adapters::matchKnown(seq);
+            const auto& seq = read->seq();
+            benchmark::DoNotOptimize(seq.data());
+            benchmark::DoNotOptimize(seq.size());
+            auto result = adapters::matchKnown(seq);
             benchmark::DoNotOptimize(result);
         }
+        benchmark::ClobberMemory();
     }
 
     SetBenchmarkState(state, reads.size(), reads.front()->length());
@@ -426,10 +430,13 @@ static void BM_AdapterMatching_AhoCorasick_Direct(benchmark::State& state) {
 
     for (auto _ : state) {
         for (const auto& read : reads) {
-            const auto& seq    = read->seq();
-            auto        result = adapters::findFirstAdapter(seq, 0);
+            const auto& seq = read->seq();
+            benchmark::DoNotOptimize(seq.data());
+            benchmark::DoNotOptimize(seq.size());
+            auto result = adapters::findFirstAdapter(seq, 0);
             benchmark::DoNotOptimize(result);
         }
+        benchmark::ClobberMemory();
     }
 
     SetBenchmarkState(state, reads.size(), reads.front()->length());
