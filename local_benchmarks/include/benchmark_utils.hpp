@@ -7,11 +7,13 @@
 #include <cstring>
 #include <expected>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <ios>
 #include <iterator>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <print>
 #include <random>
 #include <ranges>
@@ -20,7 +22,6 @@
 #include <string_view>
 #include <utility>
 #include <vector>
-#include <format>
 
 #include "benchmark_data.hpp"
 #include "knownadapters.h"
@@ -36,7 +37,7 @@ concept Mutator = requires(MutatorFunction mutatorFunc,
                            std::string&    sequence,
                            std::string&    quality,
                            std::mt19937&   randomGenerator) {
-    {mutatorFunc(sequence, quality, randomGenerator)}->std::same_as<void>;
+    { mutatorFunc(sequence, quality, randomGenerator) } -> std::same_as<void>;
 };
 
 struct NoopMutator {
@@ -135,9 +136,9 @@ template <Mutator MutatorFunction = NoopMutator>
                                                    MutatorFunction  sequenceMutator = {},
                                                    unsigned         randomSeed      = 69)
     -> std::expected<fs::path, std::string> {
-    auto outputPath = workDir() /
-                      std::format(
-                          "{}_rr{}_len{}_s{}.fastq", filenameTag, numReads, readLength, randomSeed);
+    auto outputPath =
+        workDir()
+        / std::format("{}_rr{}_len{}_s{}.fastq", filenameTag, numReads, readLength, randomSeed);
     if (fs::exists(outputPath)) {
         return outputPath;
     }
@@ -361,10 +362,43 @@ template <Mutator MutatorFunction = NoopMutator>
     }
 }
 
-inline auto loadReads(const fs::path& fastqFilePath, std::size_t maxReadsToLoad = 0)
-    -> std::vector<std::unique_ptr<Read>> {
-    return benchmark_data::getGenerator().loadReadsFromFastq(fastqFilePath.string(),
-                                                             maxReadsToLoad);
+// TODO: look into a cleaner way to do this, this could probably be re-used elsewhere
+// maybe do `using enum` for LoadError
+using ReadsResult = std::expected<std::vector<std::unique_ptr<Read>>,
+                                  benchmark_data::MasonDataGenerator::LoadError>;
+
+template <class Generator>
+concept FastqGenerator =
+    requires(Generator& generator, const fs::path& fastqPath, std::optional<std::size_t> maxReads) {
+        { generator.loadReadsFromFastq(fastqPath, maxReads) } -> std::same_as<ReadsResult>;
+    };
+
+[[nodiscard]] inline auto loadReads(FastqGenerator auto& generator,
+                                    const fs::path&      fastqFilePath,
+                                    std::size_t          maxReadsToLoad = 0) -> ReadsResult {
+    return generator.loadReadsFromFastq(fastqFilePath,
+                                        (maxReadsToLoad != 0U) ? std::optional {maxReadsToLoad}
+                                                               : std::nullopt);
 }
 
+[[nodiscard]] inline auto loadReads(const fs::path& fastqFilePath, std::size_t maxReadsToLoad = 0)
+    -> ReadsResult {
+    auto& gen = benchmark_data::getGenerator();
+    return loadReads(gen, fastqFilePath, maxReadsToLoad);
+}
+
+// Convenience overload to allow std::string at the call site
+[[nodiscard]] inline auto loadReads(FastqGenerator auto& generator,
+                                    const std::string&   fastqPath,
+                                    std::size_t          maxReadsToLoad = 0) -> ReadsResult {
+    return generator.loadReadsFromFastq(fs::path {fastqPath},
+                                        (maxReadsToLoad != 0U) ? std::optional {maxReadsToLoad}
+                                                               : std::nullopt);
+}
+
+[[nodiscard]] inline auto loadReads(const std::string& fastqPath, std::size_t maxReadsToLoad = 0)
+    -> ReadsResult {
+    auto& gen = benchmark_data::getGenerator();
+    return loadReads(gen, fastqPath, maxReadsToLoad);
+}
 }  // namespace benchmark_util

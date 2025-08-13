@@ -1,8 +1,10 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <expected>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -15,6 +17,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -356,22 +359,47 @@ public:
                                          refFasta);
     }
 
-    auto loadReadsFromFastq(const std::string& fastqPath, std::size_t maxReads = 0)
-        -> std::vector<std::unique_ptr<Read>> {
+    enum class LoadError : std::uint8_t {
+        FileOpenFailed,
+        ParseError,
+        EmptyFile,
+    };
+
+    [[nodiscard]] auto loadReadsFromFastq(const fs::path&            fastqPath,
+                                          std::optional<std::size_t> maxReads = std::nullopt)
+        -> std::expected<std::vector<std::unique_ptr<Read>>, LoadError> {
+        // Ensure it is safe to construct FastqReader, this is necessary as it does not have a
+        // proper error handling interface, so we do this so we can uses std::expected still.
+        if (auto preflight = preflightFastq(fastqPath); !preflight) {
+            return std::unexpected(preflight.error());
+        }
+
+        // Now safe to construct FastqReader (shouldn’t hit error_exit on the common cases)
+        FastqReader reader {fastqPath.string()};
+
         std::vector<std::unique_ptr<Read>> reads;
-        FastqReader                        reader {fastqPath};
+        if (maxReads && (*maxReads != 0U)) {
+            reads.reserve(*maxReads);
+        }
 
         std::size_t count = 0;
-        while (!reader.eof()) {
-            auto read = std::unique_ptr<Read> {reader.read()};
-            if (read == nullptr) {
+        for (;;) {
+            std::unique_ptr<Read> record {reader.read()};
+            if (record == nullptr) {
                 break;
             }
 
-            reads.push_back(std::move(read));
-            if (maxReads > 0 && ++count >= maxReads) {
+            reads.push_back(std::move(record));
+            if (maxReads && ++count >= *maxReads) {
                 break;
             }
+        }
+
+        if (reads.empty()) {
+            // Distinguish "no data at all" vs "hit malformed record immediately
+            // With this reader, parse problems emit stderr and then return nullptr.
+            // We didn’t see any record => either empty file or immediate parse fail.
+            return std::unexpected(LoadError::EmptyFile);
         }
 
         return reads;
@@ -688,6 +716,43 @@ private:
                 << seq << "\n+\n"    << qual << "\n";
             // clang-format on
         }
+    }
+
+    [[nodiscard]] auto preflightFastq(const fs::path& fastqPath) -> std::expected<void, LoadError> {
+        const bool      isStdin = (fastqPath == "/dev/stdin");
+        std::error_code errorCode;
+
+        if (!isStdin) {
+            if (!fs::exists(fastqPath, errorCode)) {
+                return std::unexpected(LoadError::FileOpenFailed);
+            }
+
+            if (!fs::is_regular_file(fastqPath, errorCode)) {
+                std::ifstream testFastq(fastqPath, std::ios::binary);
+                if (!testFastq) {
+                    return std::unexpected(LoadError::FileOpenFailed);
+                }
+            }
+        }
+
+        const bool isGzip = fastqPath.native().ends_with(".gz");
+        if (isGzip && !isStdin) {
+            std::ifstream file(fastqPath, std::ios::binary);
+            if (!file) {
+                return std::unexpected(LoadError::FileOpenFailed);
+            }
+
+            std::array<unsigned char, 2> header {};
+            if (!file.read(reinterpret_cast<char*>(header.data()), header.size())) {
+                return std::unexpected(LoadError::FileOpenFailed);
+            }
+
+            if (header[0] != 0x1fU || header[1] != 0x8BU) {
+                return std::unexpected(LoadError::ParseError);
+            }
+        }
+
+        return {};
     }
 };
 
