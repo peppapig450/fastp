@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iomanip>
 #include <memory>
@@ -632,7 +633,7 @@ private:
                                  const std::string& suffix) -> std::string {
         const auto contamSeed = bench_seed::derive_seed_int32_nonneg("contaminate_SE");
 
-        auto outputPath = workDir_ / ("contaminated_" + suffix + ".fastq");
+        auto outputPath = workDir_ / (suffix + ".fastq");
         auto input      = openFile<std::ifstream>(cleanFastq);
         auto output     = openFile<std::ofstream>(outputPath);
 
@@ -646,8 +647,8 @@ private:
                                    double             contamRate,
                                    const std::string& suffix)
         -> std::pair<std::string, std::string> {
-        auto outR1 = workDir_ / ("contaminated_" + suffix + "_R1.fastq");
-        auto outR2 = workDir_ / ("contaminated_" + suffix + "_R2.fastq");
+        auto outR1 = workDir_ / (suffix + "_R1.fastq");
+        auto outR2 = workDir_ / (suffix + "_R2.fastq");
 
         const auto contamSeedR1 = bench_seed::derive_seed_int32_nonneg("contaminate_PE", 0);
         const auto contamSeedR2 = bench_seed::derive_seed_int32_nonneg("contaminate_PE", 1);
@@ -701,16 +702,26 @@ auto MasonDataGenerator::generateDatasetImpl(const std::string& name,
                                              bool               withVariants,
                                              std::string_view   refFasta)
     -> DatasetReturn<IsPairedEnd> {
-    const auto seedTag = std::format("{}_s{}", name, bench_seed::get_base_seed());
+    const auto tag = std::format("{}_rr{}_len{}_plat{}_err{}_contam{}{}{}_s{}",
+                                 name,
+                                 numReads,
+                                 readLength,
+                                 platform,
+                                 errorModel,
+                                 static_cast<int>(adapterContamRate * 1000),
+                                 withVariants ? "_var1" : "",
+                                 refFasta.empty() ? "_synref" : "_extref",
+                                 bench_seed::get_base_seed());
+
     // Check if output already exists
     if constexpr (IsPairedEnd) {
-        const auto r1Out = workDir_ / (seedTag + "_R1.fastq");
-        const auto r2Out = workDir_ / (seedTag + "_R2.fastq");
+        const auto r1Out = workDir_ / (tag + "_R1.fastq");
+        const auto r2Out = workDir_ / (tag + "_R2.fastq");
         if (fs::exists(r1Out) && fs::exists(r2Out)) {
             return std::make_pair(r1Out.string(), r2Out.string());
         }
     } else {
-        const auto outputPath = workDir_ / (seedTag + ".fastq");
+        const auto outputPath = workDir_ / (tag + ".fastq");
         if (fs::exists(outputPath)) {
             return outputPath.string();
         }
@@ -734,13 +745,12 @@ auto MasonDataGenerator::generateDatasetImpl(const std::string& name,
     // Steps 4-5: branch based on single-end vs paired-end
     // Both add 3' adapter contamination
     if constexpr (IsPairedEnd) {
-        auto [cleanR1, cleanR2] = generateCleanReadsPE(simRef, numReads, readLength, name);
-        auto [contR1, contR2] =
-            addAdapterContaminationPE(cleanR1, cleanR2, adapterContamRate, name);
+        auto [cleanR1, cleanR2] = generateCleanReadsPE(simRef, numReads, readLength, tag);
+        auto [contR1, contR2] = addAdapterContaminationPE(cleanR1, cleanR2, adapterContamRate, tag);
         return std::make_pair(contR1, contR2);
     } else {
-        const auto cleanReads        = generateCleanReads(simRef, numReads, readLength, name);
-        const auto contaminatedReads = addAdapterContamination(cleanReads, adapterContamRate, name);
+        const auto cleanReads        = generateCleanReads(simRef, numReads, readLength, tag);
+        const auto contaminatedReads = addAdapterContamination(cleanReads, adapterContamRate, tag);
         return contaminatedReads;
     }
 }
