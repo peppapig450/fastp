@@ -50,6 +50,29 @@ auto isLowComplexityKey(int packedKey) -> bool {
     return (baseCount[2] + baseCount[3] >= kKeyLen - 2) || ((key >> 12U) == 0xFFU);
 }
 
+template <benchmark_util::FastqGenerator GeneratorType>
+auto loadReadsOrSkip(benchmark::State&  state,
+                     GeneratorType&     generator,
+                     const std::string& fastqPath,
+                     std::size_t        readCount) -> std::vector<std::unique_ptr<Read>> {
+    auto readsResult = benchmark_util::loadReads(generator, fastqPath, readCount);
+
+    if (!readsResult) {
+        using enum benchmark_data::MasonDataGenerator::LoadError;
+
+        std::string errorMsg;
+        switch (readsResult.error()) {
+            case FileOpenFailed: errorMsg = "Failed to open FASTQ"; break;
+            case ParseError    : errorMsg = "FASTQ parse error"; break;
+            case EmptyFile     : errorMsg = "No reads loaded"; break;
+        }
+        state.SkipWithError(errorMsg);
+        return {};
+    }
+
+    return std::move(readsResult.value());
+}
+
 }  // namespace
 
 static void BM_CheckKnownAdapters_Current_Realistic(benchmark::State& state) {
@@ -67,7 +90,10 @@ static void BM_CheckKnownAdapters_Current_Realistic(benchmark::State& state) {
                                                false,
                                                ReferenceGenomePath);
 
-    auto reads = generator.loadReadsFromFastq(fastqPath, readCount);
+    auto reads = loadReadsOrSkip(state, generator, fastqPath, readCount);
+    if (reads.empty()) {
+        return;
+    }
 
     Evaluator evaluator(nullptr);
 
@@ -79,7 +105,7 @@ static void BM_CheckKnownAdapters_Current_Realistic(benchmark::State& state) {
         benchmark::DoNotOptimize(result);
     }
 
-    SetBenchmarkState(state, readCount, readLength);
+    SetBenchmarkState(state, reads.size(), reads.front()->length());
 }
 
 // Vary contamination rate to stress AC vs approximate fallback
@@ -103,7 +129,11 @@ static void BM_CheckKnownAdapters_ParamContam(benchmark::State& state) {
                                                false,
                                                ReferenceGenomePath);
 
-    auto      reads = generator.loadReadsFromFastq(fastqPath, readCount);
+    auto reads = loadReadsOrSkip(state, generator, fastqPath, readCount);
+    if (reads.empty()) {
+        return;
+    }
+
     Evaluator evaluator {nullptr};
     adapters::getAhoCorasickMatcher();
 
@@ -112,13 +142,15 @@ static void BM_CheckKnownAdapters_ParamContam(benchmark::State& state) {
         benchmark::DoNotOptimize(result);
     }
 
-    SetBenchmarkState(state, readCount, readLength);
+    SetBenchmarkState(state, reads.size(), reads.front()->length());
 }
 
 // Many reads with long homopolymer runs after position ~20 -> triggers skip path
 static void BM_CheckKnownAdapters_LowComplexitySkip(benchmark::State& state) {
     const auto readCount  = static_cast<std::size_t>(state.range(0));
     const auto readLength = static_cast<std::size_t>(state.range(1));
+
+    auto& generator = benchmark_data::getGenerator();
 
     const std::string tag = std::format("skipLC_rr{}_len{}", readCount, readLength);
     auto              fastq =
@@ -130,7 +162,11 @@ static void BM_CheckKnownAdapters_LowComplexitySkip(benchmark::State& state) {
                                                'G',
                                                static_cast<unsigned>(
                                                    bench_seed::derive_seed("low_complexity")));
-    auto reads = benchmark_util::loadReads(fastq, readCount);
+
+    auto reads = loadReadsOrSkip(state, generator, fastq, readCount);
+    if (reads.empty()) {
+        return;
+    }
 
     Evaluator evaluator {nullptr};
 
@@ -139,7 +175,7 @@ static void BM_CheckKnownAdapters_LowComplexitySkip(benchmark::State& state) {
         benchmark::DoNotOptimize(result);
     }
 
-    SetBenchmarkState(state, readCount, readLength);
+    SetBenchmarkState(state, reads.size(), reads.front()->length());
 }
 
 // Reads with adapter as exact prefix -> validates require position-0 match fast path
@@ -154,7 +190,12 @@ static void BM_CheckKnownAdapters_AdapterPrefixDominant(benchmark::State& state)
                                                      /*prefix_prob=*/1.0,
                                                      static_cast<unsigned>(
                                                          bench_seed::derive_seed("adapterprefix")));
-    auto              reads = benchmark_util::loadReads(fq, readCount);
+
+    auto& generator = benchmark_data::getGenerator();
+    auto  reads     = loadReadsOrSkip(state, generator, fq, readCount);
+    if (reads.empty()) {
+        return;
+    }
 
     Evaluator evaluator(nullptr);
     adapters::getAhoCorasickMatcher();
@@ -164,7 +205,7 @@ static void BM_CheckKnownAdapters_AdapterPrefixDominant(benchmark::State& state)
         benchmark::DoNotOptimize(result);
     }
 
-    SetBenchmarkState(state, readCount, readLength);
+    SetBenchmarkState(state, reads.size(), reads.front()->length());
 }
 
 // Reads containing near-adapter (few mismatches) to exercise approximate fallback
@@ -182,7 +223,11 @@ static void BM_CheckKnownAdapters_NearAdapterApprox(benchmark::State& state) {
                                                    mismatches,
                                                    static_cast<unsigned>(
                                                        bench_seed::derive_seed("nearadapter")));
-    auto              reads = benchmark_util::loadReads(fq, readCount);
+    auto&             generator = benchmark_data::getGenerator();
+    auto              reads     = loadReadsOrSkip(state, generator, fq, readCount);
+    if (reads.empty()) {
+        return;
+    }
 
     Evaluator evaluator {nullptr};
     adapters::getAhoCorasickMatcher();
@@ -192,7 +237,7 @@ static void BM_CheckKnownAdapters_NearAdapterApprox(benchmark::State& state) {
         benchmark::DoNotOptimize(result);
     }
 
-    SetBenchmarkState(state, readCount, readLength);
+    SetBenchmarkState(state, reads.size(), reads.front()->length());
 }
 
 static void BM_CheckKnownAdapters_Legacy_Pure(benchmark::State& state) {
@@ -209,7 +254,10 @@ static void BM_CheckKnownAdapters_Legacy_Pure(benchmark::State& state) {
                                                false,
                                                ReferenceGenomePath);
 
-    auto reads = generator.loadReadsFromFastq(fastqPath, readCount);
+    auto reads = loadReadsOrSkip(state, generator, fastqPath, readCount);
+    if (reads.empty()) {
+        return;
+    }
 
     // Create a simple legacy-style evaluator function
     auto legacyCheckAdapters = [](const std::vector<std::unique_ptr<Read>>& reads) -> std::string {
@@ -246,7 +294,7 @@ static void BM_CheckKnownAdapters_Legacy_Pure(benchmark::State& state) {
         benchmark::DoNotOptimize(result);
     }
 
-    SetBenchmarkState(state, readCount, readLength);
+    SetBenchmarkState(state, reads.size(), reads.front()->length());
 }
 
 // Legacy method with same low-complexity filtering as current version
@@ -264,7 +312,11 @@ static void BM_CheckKnownAdapters_Legacy_WithFiltering(benchmark::State& state) 
                                                false,
                                                ReferenceGenomePath);
 
-    auto      reads = generator.loadReadsFromFastq(fastqPath, readCount);
+    auto reads = loadReadsOrSkip(state, generator, fastqPath, readCount);
+    if (reads.empty()) {
+        return;
+    }
+
     Evaluator evaluator(nullptr);  // For access to seq2int and isLowComplexityKey
 
     auto legacyWithFiltering =
@@ -327,7 +379,7 @@ static void BM_CheckKnownAdapters_Legacy_WithFiltering(benchmark::State& state) 
         benchmark::DoNotOptimize(result);
     }
 
-    SetBenchmarkState(state, readCount, readLength);
+    SetBenchmarkState(state, reads.size(), reads.front()->length());
 }
 
 // Direct comparison: matchKnown vs findFirstAdapter on individual sequences
@@ -337,7 +389,12 @@ static void BM_AdapterMatching_Legacy_Direct(benchmark::State& state) {
 
     const std::string tag = std::format("legacy_direct_rr{}_len{}", readCount, readLength);
     auto fastq            = benchmark_util::makeAdapterPrefixFastq(tag, readCount, readLength, 1.0);
-    auto reads            = benchmark_util::loadReads(fastq, readCount);
+
+    auto& generator = benchmark_data::getGenerator();
+    auto  reads     = loadReadsOrSkip(state, generator, fastq, readCount);
+    if (reads.empty()) {
+        return;
+    }
 
     for (auto _ : state) {
         for (const auto& read : reads) {
@@ -347,7 +404,7 @@ static void BM_AdapterMatching_Legacy_Direct(benchmark::State& state) {
         }
     }
 
-    SetBenchmarkState(state, readCount, readLength);
+    SetBenchmarkState(state, reads.size(), reads.front()->length());
 }
 
 // Direct comparison: Aho-Corasick findFirstAdapter on individual sequences
@@ -357,7 +414,12 @@ static void BM_AdapterMatching_AhoCorasick_Direct(benchmark::State& state) {
 
     const std::string tag = std::format("ac_direct_rr{}_len{}", readCount, readLength);
     auto fastq            = benchmark_util::makeAdapterPrefixFastq(tag, readCount, readLength, 1.0);
-    auto reads            = benchmark_util::loadReads(fastq, readCount);
+
+    auto generator = benchmark_data::getGenerator();
+    auto reads     = loadReadsOrSkip(state, generator, fastq, readCount);
+    if (reads.empty()) {
+        return;
+    }
 
     // Warm up the automaton
     adapters::getAhoCorasickMatcher();
@@ -370,7 +432,7 @@ static void BM_AdapterMatching_AhoCorasick_Direct(benchmark::State& state) {
         }
     }
 
-    SetBenchmarkState(state, readCount, readLength);
+    SetBenchmarkState(state, reads.size(), reads.front()->length());
 }
 
 // Test legacy method performance under different contamination rates
@@ -393,7 +455,10 @@ static void BM_CheckKnownAdapters_Legacy_ParamContam(benchmark::State& state) {
                                                false,
                                                ReferenceGenomePath);
 
-    auto reads = generator.loadReadsFromFastq(fastqPath, readCount);
+    auto reads = loadReadsOrSkip(state, generator, fastqPath, readCount);
+    if (reads.empty()) {
+        return;
+    }
 
     auto legacyCheckAdapters = [](const std::vector<std::unique_ptr<Read>>& reads) -> std::string {
         const auto&                          knownAdapters = adapters::getKnown();
@@ -427,7 +492,7 @@ static void BM_CheckKnownAdapters_Legacy_ParamContam(benchmark::State& state) {
         benchmark::DoNotOptimize(result);
     }
 
-    SetBenchmarkState(state, readCount, readLength);
+    SetBenchmarkState(state, reads.size(), reads.front()->length());
 }
 
 // clang-format off

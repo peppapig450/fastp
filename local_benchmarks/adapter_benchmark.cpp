@@ -7,8 +7,34 @@
 #include <vector>
 
 #include "include/bench_seed.hpp"
+#include "include/benchmark_data.hpp"
 #include "include/benchmark_utils.hpp"
 #include "knownadapters.h"
+
+namespace {  // anon
+
+template <benchmark_util::FastqGenerator GeneratorType>
+auto loadReadsOrSkip(benchmark::State&  state,
+                     GeneratorType&     generator,
+                     const std::string& fastqPath,
+                     std::size_t        readCount) -> std::vector<std::unique_ptr<Read>> {
+    auto readsResult = benchmark_util::loadReads(generator, fastqPath, readCount);
+
+    if (!readsResult) {
+        using enum benchmark_data::MasonDataGenerator::LoadError;
+
+        std::string errorMsg;
+        switch (readsResult.error()) {
+            case FileOpenFailed: errorMsg = "Failed to open FASTQ"; break;
+            case ParseError    : errorMsg = "FASTQ parse error"; break;
+            case EmptyFile     : errorMsg = "No reads loaded"; break;
+        }
+        state.SkipWithError(errorMsg);
+        return {};
+    }
+
+    return std::move(readsResult.value());
+}
 
 // Build a synthetic corpus of sequences, optionally with an adapter at position p
 static auto makeSequences(std::size_t n,
@@ -201,8 +227,10 @@ static void BM_AC_MatchKnown_Approximate(benchmark::State& state) {
         len,
         pos,
         mismatches,
-        static_cast<unsigned>(bench_seed::derive_seed("nearadapter")));
-    auto reads = benchmark_util::loadReads(fq, n);
+                                             static_cast<unsigned>(
+                                                 bench_seed::derive_seed("nearadapter")));
+    auto& generator = benchmark_data::getGenerator();
+    auto  reads     = loadReadsOrSkip(state, generator, fq, n);
 
     // Extract just sequences to call the function directly
     std::vector<std::string> seqs;
