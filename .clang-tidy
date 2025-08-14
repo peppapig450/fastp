@@ -1,0 +1,19 @@
+Checks: >-
+  -*,
+  clang-analyzer-*,
+  clang-analyzer-optin.*,
+  modernize-*,
+  readability-*,
+  performance-*,
+  bugprone-*,
+  misc-*,
+  portability-*,
+  hicpp-*,
+  security-*,
+  -bugprone-easily-swappable-parameters
+
+WarningsAsErrors: clang-analyzer-*
+
+CheckOptions:
+  - key: misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic
+    value: true

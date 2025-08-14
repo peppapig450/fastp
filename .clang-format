@@ -1,0 +1,51 @@
+# Base Style and Standard
+BasedOnStyle: Google
+Standard: c++11
+
+# Indentation
+IndentWidth: 4
+TabWidth: 4
+ContinuationIndentWidth: 4
+AccessModifierOffset: -4
+IndentPPDirectives: BeforeHash
+
+# Line Length & General Formatting
+ColumnLimit: 100
+BreakBeforeBinaryOperators: NonAssignment
+PenaltyBreakBeforeFirstCallParameter: 1000
+
+# Bracing & Wrapping Behavior
+Cpp11BracedListStyle: true
+SpaceBeforeCpp11BracedList: true
+AllowAllParametersOfDeclarationOnNextLine: false
+AllowAllArgumentsOnNextLine: false
+BinPackParameters: false
+BinPackArguments: false
+AlignAfterOpenBracket: Align
+
+# Alignment
+AlignConsecutiveAssignments:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: true
+  AlignCompound: true
+  AlignFunctionDeclarations: true
+AlignConsecutiveBitFields: Consecutive
+AlignConsecutiveDeclarations: Consecutive
+AlignConsecutiveShortCaseStatements:
+  Enabled: true
+  AcrossEmptyLines: true
+  AcrossComments: true
+  AlignCaseColons: true
+  AlignCaseArrows: true
+
+# Short Constructs
+AllowShortIfStatementsOnASingleLine: true
+AllowShortEnumsOnASingleLine: true
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortCaseExpressionOnASingleLine: true
+
+# Constructor & Inheritance Formatting
+BreakInheritanceList: BeforeComma
+PackConstructorInitializers: Never
+BreakConstructorInitializers: BeforeComma
