@@ -44,7 +44,13 @@ target_include_directories(evaluator_core
 )
 
 # Use per-target C++ standard and warnings
-target_compile_features(evaluator_core PUBLIC cxx_std_23)
+target_compile_features(evaluator_core PUBLIC cxx_std_11)
+
+set_target_properties(evaluator_core PROPERTIES
+  CXX_STANDARD 11
+  CXX_STANDARD_REQUIRED YES
+  CXX_EXTENSIONS OFF
+)
 
 # Warnings by compiler
 target_compile_options(evaluator_core
@@ -78,6 +84,12 @@ add_executable(evaluator_benchmark
     evaluator_benchmark.cpp
     adapter_benchmark.cpp
     ../src/ahocorasick.h
+)
+
+set_target_properties(evaluator_benchmark PROPERTIES
+  CXX_STANDARD 23
+  CXX_STANDARD_REQUIRED YES
+  CXX_EXTENSIONS OFF
 )
 
 target_link_libraries(evaluator_benchmark
