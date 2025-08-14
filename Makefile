@@ -7,8 +7,8 @@ BINDIR ?= $(PREFIX)/bin
 INCLUDE_DIRS ?=
 LIBRARY_DIRS ?=
 
-SRC := $(wildcard ${DIR_SRC}/*.cpp)
-OBJ := $(patsubst %.cpp,${DIR_OBJ}/%.o,$(notdir ${SRC}))
+SRC := $(wildcard ${DIR_SRC}/*.cpp ${DIR_SRC}/*/*.cpp)
+OBJ := $(patsubst ${DIR_SRC}/%.cpp,${DIR_OBJ}/%.o,${SRC})
 
 TARGET := fastp
 

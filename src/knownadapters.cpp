@@ -2,178 +2,15 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <string>
-#include <type_traits>
+
 #include <unordered_map>
 #include <vector>
 
+#include "simd/hamming.h"
 #include "ahocorasick.h"
-
-#if defined(__AVX512BW__) || defined(__AVX2__) || defined(__SSE2__)
-    #include <immintrin.h>
-#endif
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
-    #include <arm_neon.h>
-#endif
-
-namespace {  // anon
-
-template <typename IntegerType>
-inline auto popcountManualFallback(IntegerType x) noexcept -> int {
-    int count = 0;
-    while (x != 0) {
-        x &= (x - 1);
-        ++count;
-    }
-
-    return count;
-}
-
-inline auto popcount32(std::uint32_t x) noexcept -> int {
-#if defined(__GNUC__) || defined(__clang__)
-    return __builtin_popcount(x);
-#elif defined(_MSC_VER)
-    return __popcnt(x);
-#else
-    // Portable fallback
-    return popcountManualFallback(x);
-#endif
-}
-
-inline auto popcount64(std::uint64_t x) noexcept -> int {
-#if defined(__GNUC__) || defined(__clang__)
-    return __builtin_popcountll(x);
-#elif defined(_MSC_VER) && defined(_M_X64)
-    return static_cast<int>(__popcnt64(x));
-#elif defined(_MSC_VER)
-    // 32-bit MSVC: split in halves
-    return __popcnt(static_cast<std::uint32_t>(x)) + __popcnt(static_cast<std::uint32_t>(x >> 32U));
-#else
-    return popcountManualFallback(x);
-#endif
-}
-
-template <class IntegerType,
-          class = typename std::enable_if<
-              std::is_integral<IntegerType>::value
-              && !std::is_same<typename std::remove_cv<IntegerType>::type, bool>::value
-              && sizeof(IntegerType) <= 8>::type>
-inline auto popcount(IntegerType x) noexcept -> int {
-    using UnsignedInt = typename std::make_unsigned<IntegerType>::type;
-
-    return (sizeof(UnsignedInt) <= 4U)
-               ? popcount32(static_cast<std::uint32_t>(static_cast<UnsignedInt>(x)))
-               : popcount64(static_cast<std::uint64_t>(static_cast<UnsignedInt>(x)));
-}
-
-// Count byte mismatches between s[0..len] and a[0..len], but bail as soon as we exceed `cap`. SIMD
-// paths do 64/32/16 byes per step; scalar tail is branch-light.
-inline auto hammingCap(const char* s, const char* a, std::size_t length, int cap) -> int {
-    if (s == nullptr || a == nullptr) {
-        // REVIEW: throw an exception here?
-        return -1;
-    }
-
-    int         mismatches = 0;
-    std::size_t i          = 0;
-
-#if defined(__AVX512BW__)
-    // 64 bytes per iteration
-    for (; i + 64 <= length; i += 64) {
-        __m512i vs       = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(s + i));
-        __m512i va       = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(a + i));
-        // eqmask has 1-bit per byte where equal
-        __mmask64 eqmask = _mm512_cmpeq_epi8_mask(vs, va);
-
-        // Count mismatches = popcount(~eqmask)
-        auto mism_mask  = ~static_cast<std::uint64_t>(eqmask);
-        mismatches     += popcount(mism_mask);
-
-        if (mismatches > cap) {
-            return mismatches;
-        }
-    }
-#endif
-
-#if defined(__AVX2__)
-    // 32 bytes per iteration
-    for (; i + 32 <= length; i += 32) {
-        __m256i vs = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(s + i));
-        __m256i va = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(a + i));
-        __m256i eq = _mm256_cmpeq_epi8(vs, va);
-
-        auto mask   = static_cast<std::uint32_t>(~_mm256_movemask_epi8(eq));
-        mismatches += popcount(mask);
-        if (mismatches > cap) {
-            return mismatches;
-        }
-    }
-#endif
-
-#if defined(__SSE2__)
-    // 16 bytes per iteration
-    for (; i + 16 <= length; i += 16) {
-        __m128i vs = _mm_loadu_si128(reinterpret_cast<const __m128i*>(s + i));
-        __m128i va = _mm_loadu_si128(reinterpret_cast<const __m128i*>(a + i));
-        __m128i eq = _mm_cmpeq_epi8(vs, va);
-
-        auto mask   = static_cast<std::uint32_t>(~_mm_movemask_epi8(eq));
-        mismatches += popcount(mask);
-        if (mismatches > cap) {
-            return mismatches;
-        }
-    }
-#endif
-
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
-    // 16 bytes per iteration (ARM NEON)
-    for (; i + 16 <= length; i += 16) {
-        uint8x16_t vs = vld1q_u8(reinterpret_cast<const std::uint8_t*>(s + i));
-        uint8x16_t va = vld1q_u8(reinterpret_cast<const std::uint8_t*>(a + i));
-
-        // eq = 0xFF where equal, 0x00 where not
-        uint8x16_t eq = vceqq_u8(vs, va);
-
-        // ne = 0xFF where mismatch, 0x00 where not
-        uint8x16_t ne = vmvnq_u8(eq);
-
-        // Convert 0xFF/0x00 -> 1/0 per lane, then sum lanes
-        uint8x16_t    ones = vshrq_n_u8(ne, 7);
-        std::uint32_t mismatch_chunk;
-
-    #if defined(__aarch64__)
-        mismatch_chunk = static_cast<std::uint32_t>(vaddvq_u8(ones));
-    #else
-        // Portable reduction for 32-bit ARM
-        uint16x8_t sum16 = vpaddlq_u8(ones);    // pairwise add -> u16
-        uint32x4_t sum32 = vpaddlq_u16(sum16);  // -> u32
-        uint64x2_t sum64 = vpaddlq_u32(sum32);  // -> u64
-        mismatch_chunk =
-            static_cast<std::uint32_t>(vgetq_lane_u64(sum64, 0) + vgetq_lane_u64(sum64, 1));
-    #endif
-
-        mismatches += static_cast<std::int32_t>(mismatch_chunk);
-        if (mismatches > cap) {
-            return mismatches;
-        }
-    }
-#endif
-
-    // Scalar tail
-    for (; i < length; ++i) {
-        mismatches += static_cast<int>(s[i] != a[i]);  // branchless increment
-        if (mismatches > cap) {
-            return mismatches;
-        }
-    }
-
-    return mismatches;
-}
-
-}  // namespace
 
 // Some adapter sequences are from
 // https://github.com/stephenturner/adapters/blob/master/adapters_combined_256_unique.fasta
@@ -583,7 +420,7 @@ auto matchKnownApproximate(const std::string& seq, int maxMismatches, int minMat
 
             
 
-            int mismatches = hammingCap(seqPtr + pos, adapterPtr, compareLen, maxMismatches);
+            int mismatches = simd::hammingCap(seqPtr + pos, adapterPtr, compareLen, maxMismatches);
             if (mismatches <= maxMismatches) {
                 results.push_back({
                     adapter,
