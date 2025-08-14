@@ -35,6 +35,7 @@ add_library(evaluator_core STATIC
     ../src/nucleotidetree.cpp
     ../src/sequence.cpp
     ../src/knownadapters.cpp
+    ../src/simd/hamming_dispatch.cpp
 )
 
 # If headers in ../src are meant to be public, expose that include dir
