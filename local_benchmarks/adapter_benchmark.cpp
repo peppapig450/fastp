@@ -80,12 +80,12 @@ static void BM_AC_FindFirstAdapter_Prefix(benchmark::State& state) {
                               /*pos=*/0,
                               /*fraction=*/1.0,
                               static_cast<unsigned>(bench_seed::derive_seed("BM_AC_Prefix")));
-    adapters::getAhoCorasickMatcher();
+    auto& matcher = adapters::getAhoCorasickMatcher();
 
     std::size_t hits = 0;
     for (auto _ : state) {
         for (const auto& s : seqs) {
-            auto match = adapters::findFirstAdapter(s, 0);
+            auto match = matcher.findFirst(s, 0);
             if (match.first && match.second.position == 0) {
                 ++hits;
             }
@@ -138,18 +138,20 @@ static void BM_AC_MatchKnown_Prefix(benchmark::State& state) {
                       /*pos=*/0,
                       /*fraction=*/1.0,
                       static_cast<unsigned>(bench_seed::derive_seed("BM_AC_MatchKnown_Prefix")));
-    adapters::getAhoCorasickMatcher();
+    auto& matcher = adapters::getAhoCorasickMatcher();
+    std::vector<adapters::AhoCorasick::Match> matches;
 
     std::size_t hits   = 0;
     std::size_t misses = 0;
     for (auto _ : state) {
         for (const auto& s : seqs) {
-            auto matches = adapters::matchKnownAhoCorasick(s, 0);
+            matcher.searchInto(s, matches);
             if (!matches.empty()) {
                 ++hits;
             } else {
                 ++misses;
             }
+            matches.clear();
         }
     }
     benchmark::DoNotOptimize(hits);
@@ -169,12 +171,12 @@ static void BM_AC_FindFirstAdapter_NoMatch(benchmark::State& state) {
                               /*pos=*/0,
                               /*fraction=*/1.0,
                               static_cast<unsigned>(bench_seed::derive_seed("BM_AC_NoMatch")));
-    adapters::getAhoCorasickMatcher();
+    auto& matcher = adapters::getAhoCorasickMatcher();
 
     std::size_t misses = 0;
     for (auto _ : state) {
         for (const auto& s : seqs) {
-            auto match = adapters::findFirstAdapter(s, 0);
+            auto match = matcher.findFirst(s, 0);
             if (!match.first) {
                 ++misses;
             }
@@ -185,7 +187,7 @@ static void BM_AC_FindFirstAdapter_NoMatch(benchmark::State& state) {
     state.SetBytesProcessed(state.iterations() * static_cast<long long>(n * len));
 }
 
-// Multi-match (adapter at middle) using matchKnownAhoCorasick (collects all exact hits)
+// Multi-match (adapter at middle) using searchInto (collects all exact hits)
 static void BM_AC_MatchKnown_Exact_Mid(benchmark::State& state) {
     const auto n   = static_cast<std::size_t>(state.range(0));
     const auto len = static_cast<std::size_t>(state.range(1));
@@ -197,13 +199,15 @@ static void BM_AC_MatchKnown_Exact_Mid(benchmark::State& state) {
                               pos,
                               /*fraction=*/1.0,
                               static_cast<unsigned>(bench_seed::derive_seed("BM_AC_Exact_Mid")));
-    adapters::getAhoCorasickMatcher();
+    auto& matcher = adapters::getAhoCorasickMatcher();
+    std::vector<adapters::AhoCorasick::Match> matches;
 
     std::size_t total = 0;
     for (auto _ : state) {
         for (const auto& s : seqs) {
-            auto hits  = adapters::matchKnownAhoCorasick(s, 0);
-            total     += hits.size();
+            matcher.searchInto(s, matches);
+            total += matches.size();
+            matches.clear();
         }
     }
     benchmark::DoNotOptimize(total);

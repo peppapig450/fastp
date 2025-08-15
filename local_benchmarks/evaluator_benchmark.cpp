@@ -15,6 +15,7 @@
 #include "include/benchmark_data.hpp"
 #include "include/benchmark_utils.hpp"
 #include "knownadapters.h"
+#include "ahocorasick.h"
 #include "read.h"
 
 namespace {  // anon
@@ -383,7 +384,7 @@ static void BM_CheckKnownAdapters_Legacy_WithFiltering(benchmark::State& state) 
     SetBenchmarkState(state, reads.size(), reads.front()->length());
 }
 
-// Direct comparison: matchKnown vs findFirstAdapter on individual sequences
+// Direct comparison: matchKnown vs findFirst on individual sequences
 static void BM_AdapterMatching_Legacy_Direct(benchmark::State& state) {
     const auto readCount  = static_cast<std::size_t>(state.range(0));
     const auto readLength = static_cast<std::size_t>(state.range(1));
@@ -411,7 +412,7 @@ static void BM_AdapterMatching_Legacy_Direct(benchmark::State& state) {
     SetBenchmarkState(state, reads.size(), reads.front()->length());
 }
 
-// Direct comparison: Aho-Corasick findFirstAdapter on individual sequences
+// Direct comparison: Aho-Corasick findFirst on individual sequences
 static void BM_AdapterMatching_AhoCorasick_Direct(benchmark::State& state) {
     const auto readCount  = static_cast<std::size_t>(state.range(0));
     const auto readLength = static_cast<std::size_t>(state.range(1));
@@ -426,14 +427,14 @@ static void BM_AdapterMatching_AhoCorasick_Direct(benchmark::State& state) {
     }
 
     // Warm up the automaton
-    adapters::getAhoCorasickMatcher();
+    auto& matcher = adapters::getAhoCorasickMatcher();
 
     for (auto _ : state) {
         for (const auto& read : reads) {
             const auto& seq = read->seq();
             benchmark::DoNotOptimize(seq.data());
             benchmark::DoNotOptimize(seq.size());
-            auto result = adapters::findFirstAdapter(seq, 0);
+            auto result = matcher.findFirst(seq, 0);
             benchmark::DoNotOptimize(result);
         }
         benchmark::ClobberMemory();
