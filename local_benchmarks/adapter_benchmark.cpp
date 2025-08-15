@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "ahocorasick.h"
 #include "include/bench_seed.hpp"
 #include "include/benchmark_data.hpp"
 #include "include/benchmark_utils.hpp"
@@ -255,6 +256,28 @@ static void BM_AC_MatchKnown_Approximate(benchmark::State& state) {
     state.SetBytesProcessed(state.iterations() * static_cast<long long>(n * len));
 }
 
+static void BM_AhoCorasickBuild_Only(benchmark::State& state) {
+    const auto& adapters = adapters::getKnown();
+
+    std::size_t total_length = 0;
+    for (const auto& [adapter, name] : adapters) {
+        total_length += adapter.size();
+    }
+
+    for (auto _ : state) {
+        adapters::AhoCorasick matcher;
+        for (const auto& [adapter, name] : adapters) {
+            matcher.addPattern(adapter, name);
+        }
+        matcher.build();
+        benchmark::ClobberMemory();
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<long long>(adapters.size()));
+    state.SetBytesProcessed(state.iterations() * static_cast<long long>(total_length));
+}
+
+
 // clang-format off
 BENCHMARK(BM_AC_FindFirstAdapter_Prefix)
     ->Args({100'000, 150})
@@ -280,4 +303,6 @@ BENCHMARK(BM_AC_MatchKnown_Approximate)
     ->Args({10'000, 150, 40, 1, 8})
     ->Args({10'000, 150, 60, 2, 10})
     ->Args({10'000, 250, 80, 3, 12});
+
+BENCHMARK(BM_AhoCorasickBuild_Only);
 // clang-format on
