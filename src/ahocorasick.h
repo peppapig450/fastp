@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <queue>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -22,11 +24,18 @@ namespace adapters {
  */
 class AhoCorasick final {
 public:
+    // Lightweight handle to an interned pattern
+    using PatternId = std::uint32_t;
+
+    struct PatternEntry {
+        std::string pattern;  // owned once
+        std::string name;     // owned once
+    };
+
     struct Match {
-        std::string pattern;   // The matched adapter sequence
-        std::string name;      // The adapter description/name
-        std::size_t position;  // Position in text where match starts
-        std::size_t length;    // The length of the matched pattern
+        PatternId   id;        // id of interned (pattern, name)
+        std::size_t position;  // Position in text where the match starts
+        std::size_t length;    // The length of the matched patterns
     };
 
 private:
@@ -37,7 +46,7 @@ private:
         static constexpr int kAlphabetSize = 256;  // Support all ASCII characters
 
         std::array<std::unique_ptr<TrieNode>, kAlphabetSize> children {};
-        std::vector<std::pair<std::string, std::string>> output;  // Pattern-name parts at this node
+        std::vector<PatternId> output;  // Pattern ids that end at this node
 
         TrieNode* failure = nullptr;  // Failure link for the AC algorithm
 
@@ -45,6 +54,7 @@ private:
     };
 
     std::unique_ptr<TrieNode> root;
+    std::vector<PatternEntry> patterns_;                 // owns every (pattern, name) exactly once
     bool                      built            = false;  // Track if failure links have been built
     std::size_t               minPatternLength = std::numeric_limits<std::size_t>::max();
 
@@ -75,6 +85,11 @@ public:
     auto operator=(AhoCorasick&&) -> AhoCorasick&      = default;
 
     /**
+     * @brief Access an interned pattern entry by id (no copies).
+     */
+    auto entry(PatternId patternId) const -> const PatternEntry& { return patterns_[patternId]; }
+
+    /**
      * @brief Add a pattern to the automaton
      * @param pattern The adapter sequence to match
      * @param name The adapter description/name
@@ -88,10 +103,15 @@ public:
         minPatternLength = std::min(minPatternLength, pattern.length());
 
         TrieNode* current = root.get();
-        for (unsigned char base : pattern) {
-            current = getOrCreateChild(current, base);
+        for (auto chr : pattern) {
+            auto base = static_cast<unsigned char>(chr);
+            current   = getOrCreateChild(current, base);
         }
-        current->output.emplace_back(pattern, name);
+
+        // Intern (pattern, name) once, remember id at the terminal node
+        auto patternId = static_cast<PatternId>(patterns_.size());
+        patterns_.push_back(PatternEntry {pattern, name});
+        current->output.push_back(patternId);
     }
 
     /**
@@ -151,22 +171,22 @@ public:
     }
 
     /**
-     * @brief Search for all pattern occurrences in the text
+     * @brief Search for all pattern occurrences into a caller-provided vector (reusable buffer).
      * @param text The text to search in
-     * @return Vector of all matches found
+     * @param out Output vector to be filled; capacity can be reused across calls
      */
-    auto search(const std::string& text) -> std::vector<Match> {
+    void searchInto(const std::string& text, std::vector<Match>& out) {
         if (!built) {
             build();
         }
 
-        std::vector<Match> matches;
-        TrieNode*          currentNode = root.get();
+        out.clear();
+        TrieNode* currentNode = root.get();
 
         for (std::size_t i = 0; i < text.length(); ++i) {
             auto symbol = static_cast<unsigned char>(text[i]);
 
-            //  Follow failure links until we find a match or reach root
+            // Follow failure links into we find a match or reach root
             while (currentNode != root.get() && currentNode->children[symbol] == nullptr) {
                 currentNode = currentNode->failure;
             }
@@ -176,22 +196,77 @@ public:
             }
 
             // Report all matches at current position
-            for (const auto& match : currentNode->output) {
-                const auto& pattern = match.first;
-                const auto& name    = match.second;
-
-                matches.push_back({pattern, name, i + 1 - pattern.length(), pattern.length()});
+            if (!currentNode->output.empty()) {
+                for (PatternId patternId : currentNode->output) {
+                    const auto& patternPair = patterns_[patternId];
+                    out.push_back(Match {patternId,
+                                         i + 1 - patternPair.pattern.length(),
+                                         patternPair.pattern.length()});
+                }
             }
         }
+    }
 
+    /**
+     * @brief Search for all pattern occurrences in the text (convenience wrapper)
+     *         Prefer searchInto() when you can reuse a buffer.
+     * @param text The text to search in
+     * @return Vector of all matches found
+     */
+    auto search(const std::string& text) -> std::vector<Match> {
+        std::vector<Match> matches;
+        searchInto(text, matches);
         return matches;
+    }
+
+    /**
+     * Iterate matches with a callback to avoid building any vector.
+     * @param text The text to search in
+     * @param onMatch Callable with signature
+     *        void(PatternId id, const PatternEntry& entry, std::size_t pos, std::size_t len)
+     */
+    template <typename MatchCallbackFunction>
+    void forEachMatch(const std::string& text, MatchCallbackFunction&& onMatch) {
+        using result_t = typename std::result_of<
+            MatchCallbackFunction(PatternId, const PatternEntry&, std::size_t, std::size_t)>::type;
+        static_assert(std::is_same<void, result_t>::value,
+                      "onMatch must be callable as: void(PatternId, const PatternEntry&, "
+                      "std::size_t, std::size_t)");
+
+        if (!built) {
+            build();
+        }
+
+        TrieNode* currentNode = root.get();
+
+        for (std::size_t i = 0; i < text.length(); ++i) {
+            auto symbol = static_cast<unsigned char>(text[i]);
+
+            while (currentNode != root.get() && currentNode->children[symbol] == nullptr) {
+                currentNode = currentNode->failure;
+            }
+
+            if (currentNode->children[symbol] != nullptr) {
+                currentNode = currentNode->children[symbol].get();
+            }
+
+            if (!currentNode->output.empty()) {
+                for (PatternId patternId : currentNode->output) {
+                    const auto& patternPair = patterns_[patternId];
+                    onMatch(patternId,
+                            patternPair,
+                            i + 1 - patternPair.pattern.length(),
+                            patternPair.pattern.length());
+                }
+            }
+        }
     }
 
     /**
      * @brief Find the first match in the text (early termination)
      * @param text The text to search in
      * @param startPos Starting position in the text
-     * @return Optional match if found
+     * @return (found, Match) pair; when found==false, Match contents are unspecified
      */
     auto findFirst(const std::string& text, std::size_t startPos = 0) -> std::pair<bool, Match> {
         if (!built) {
@@ -212,13 +287,12 @@ public:
             }
 
             if (!currentNode->output.empty()) {
-                const auto& pattern = currentNode->output[0].first;
-                const auto& name    = currentNode->output[0].second;
+                PatternId   patternId   = currentNode->output[0];
+                const auto& patternPair = patterns_[patternId];
                 return {true,
-                        {/*pattern=*/pattern,
-                         /*name=*/name,
-                         /*position=*/i + 1 - pattern.length(),
-                         /*length=*/pattern.length()}};
+                        Match {patternId,
+                               i + 1 - patternPair.pattern.length(),
+                               patternPair.pattern.length()}};
             }
         }
 

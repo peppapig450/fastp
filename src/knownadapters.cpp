@@ -318,22 +318,24 @@ auto getAhoCorasickMatcher() -> AhoCorasick& {
 auto matchKnownAhoCorasick(const std::string& seq, std::size_t startPos)
     -> std::vector<AdapterMatch> {
     auto& matcher = getAhoCorasickMatcher();
-    auto  acMatches = matcher.search(seq);
-
     std::vector<AdapterMatch> results;
-    results.reserve(acMatches.size());
 
-    for (const auto& match : acMatches) {
-        // Only include matches that start at or after startPos
-        if (match.position >= startPos) {
-            results.push_back({
-                match.pattern,
-                match.name,
-                match.position,
-                0  // No mismatches in exact matching
-            });
-        }
-    }
+    // TODO: we could go further and try to avoid the copies here by using a view struct or holding pointers
+    matcher.forEachMatch(seq,
+                         [&](AhoCorasick::PatternId          id,
+                             const AhoCorasick::PatternEntry entry,
+                             std::size_t                     position,
+                             std::size_t /*length*/) {
+                             // Only include matches that start at or after startPos
+                             if (position >= startPos) {
+                                 results.push_back({
+                                     entry.pattern,  // copies once into AdapterMatch
+                                     entry.name,     // copies once into AdapterMatch
+                                     position,
+                                     0  // No mismatches in exact matching
+                                 });
+                             }
+                         });
 
     return results;
 }
@@ -348,10 +350,11 @@ auto findFirstAdapter(const std::string& seq, std::size_t startPos)
     const auto& match = matchPair.second;
 
     if (found) {
+        const auto& entry = matcher.entry(match.id);
         return {true,
                 {
-                    match.pattern,
-                    match.name,
+                    entry.pattern,
+                    entry.name,
                     match.position,
                     0  // No mismatches
                 }};
