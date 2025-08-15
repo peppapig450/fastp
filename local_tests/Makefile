@@ -16,6 +16,7 @@ SRCS := evaluator_tests.cpp \
 		../src/read.cpp \
 		../src/sequence.cpp \
 		../src/knownadapters.cpp \
+		../src/simd/hamming_dispatch.cpp \
 		stubs/fastqreader.cpp
 
 # Map sources to object files
