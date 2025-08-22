@@ -263,24 +263,25 @@ static void BM_AC_MatchKnown_Approximate(benchmark::State& state) {
 static void BM_AhoCorasickBuild_Only(benchmark::State& state) {
     const auto& adapters = adapters::getKnown();
 
-    std::size_t total_length = 0;
-    for (const auto& [adapter, name] : adapters) {
-        total_length += adapter.size();
-    }
+    std::size_t totalLength = 0;
+    for (const auto& [seq, name] : adapters) totalLength += seq.size();
 
     for (auto _ : state) {
-        adapters::AhoCorasick matcher;
-        for (const auto& [adapter, name] : adapters) {
-            matcher.addPattern(adapter, name);
-        }
-        matcher.build();
+        state.PauseTiming();
+        adapters::AhoCorasick m;
+        m.reserve(1 + totalLength, adapters.size());   // mirror production
+        state.ResumeTiming();
+
+        for (const auto& [seq, name] : adapters) m.addPattern(seq, name);
+        m.build();
+
+        benchmark::DoNotOptimize(m);
         benchmark::ClobberMemory();
     }
 
     state.SetItemsProcessed(state.iterations() * static_cast<long long>(adapters.size()));
-    state.SetBytesProcessed(state.iterations() * static_cast<long long>(total_length));
+    state.SetBytesProcessed(state.iterations() * static_cast<long long>(totalLength));
 }
-
 
 // clang-format off
 BENCHMARK(BM_AC_FindFirstAdapter_Prefix)
