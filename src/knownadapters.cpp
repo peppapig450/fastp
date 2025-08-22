@@ -298,16 +298,17 @@ auto getAhoCorasickMatcher() -> AhoCorasick& {
 
         // Add all known adapters to the automaton
         const auto& adapters = getKnown();
+        std::size_t totaLength = 0;
         for (const auto& adapterPair : adapters) {
-            const auto& sequence = adapterPair.first;
-            const auto& name     = adapterPair.second;
+            totaLength += adapterPair.first.size();
+        }
+        matcher->reserve(totaLength + 1, adapters.size());
 
-            matcher->addPattern(sequence, name);
+        for (const auto& adapterPair : adapters) {
+            matcher->addPattern(adapterPair.first, adapterPair.second);
         }
 
-        // Build the failure links
         matcher->build();
-
         return matcher;
     }();
 
@@ -319,8 +320,8 @@ auto matchKnownAhoCorasick(const std::string& seq, std::size_t startPos)
     -> std::vector<AdapterMatch> {
     auto& matcher = getAhoCorasickMatcher();
     std::vector<AdapterMatch> results;
+    results.reserve(8);
 
-    // TODO: we could go further and try to avoid the copies here by using a view struct or holding pointers
     matcher.forEachMatch(seq,
                          [&](AhoCorasick::PatternId          id,
                              const AhoCorasick::PatternEntry entry,
@@ -329,8 +330,8 @@ auto matchKnownAhoCorasick(const std::string& seq, std::size_t startPos)
                              // Only include matches that start at or after startPos
                              if (position >= startPos) {
                                  results.push_back({
-                                     entry.pattern,  // copies once into AdapterMatch
-                                     entry.name,     // copies once into AdapterMatch
+                                     entry.sequence.to_string(),  // copies once into AdapterMatch
+                                     entry.label.to_string(),     // copies once into AdapterMatch
                                      position,
                                      0  // No mismatches in exact matching
                                  });
@@ -346,18 +347,13 @@ auto findFirstAdapter(const std::string& seq, std::size_t startPos)
     auto& matcher   = getAhoCorasickMatcher();
     auto  matchPair = matcher.findFirst(seq, startPos);
 
-    const auto& found = matchPair.first;
-    const auto& match = matchPair.second;
-
-    if (found) {
-        const auto& entry = matcher.entry(match.id);
+    if (matchPair.first) {
+        const auto& entry = matcher.getPatternEntry(matchPair.second.id);
         return {true,
-                {
-                    entry.pattern,
-                    entry.name,
-                    match.position,
-                    0  // No mismatches
-                }};
+                {entry.sequence.to_string(),
+                 entry.label.to_string(),
+                 matchPair.second.position,
+                 0}};
     }
 
     return {false, {}};
@@ -367,8 +363,8 @@ auto findFirstAdapter(const std::string& seq, std::size_t startPos)
 auto matchKnownApproximate(const std::string& seq, int maxMismatches, int minMatchLength)
     -> std::vector<AdapterMatch> {
     std::vector<AdapterMatch> results;
+    results.reserve(8);
 
-    const auto& adapters = getKnown();
     const auto  seqLen   = seq.size();
     if (seqLen < static_cast<std::size_t>(minMatchLength)) {
         return results;  // Fast exit + avoid potential unsigned underflow risk
@@ -377,61 +373,46 @@ auto matchKnownApproximate(const std::string& seq, int maxMismatches, int minMat
     const char* seqPtr     = seq.data();
     const auto  globalLast = seqLen - static_cast<std::size_t>(minMatchLength) + 1;
 
-    for (const auto& adapterPair : adapters) {
-        const std::string& adapter = adapterPair.first;
-        const std::string& name    = adapterPair.second;
-
-        const auto adapterLen = adapter.size();
+    const auto& patterns = getAhoCorasickMatcher().getPatterns();
+    for (std::size_t i = 0; i < patterns.size(); ++i) {
+        const char* adapterPtr = patterns[i].sequence.data();
+        const auto  adapterLen = patterns[i].sequence.size();
         if (adapterLen < static_cast<std::size_t>(minMatchLength)) {
             continue;
         }
 
-        const char* adapterPtr = adapter.data();
-
-        // If the adapter is longer than seq we can still match up to seqLen
-        // but must honor the minMatchLength bound already captured in globalLast.
         const auto lastStart = (adapterLen <= seqLen) ? (seqLen - adapterLen + 1) : globalLast;
-
-        const auto limit = std::min<std::size_t>(globalLast, lastStart);
+        const auto limit     = std::min<std::size_t>(globalLast, lastStart);
 
         for (std::size_t pos = 0; pos < limit; ++pos) {
             const auto compareLen = std::min(adapterLen, seqLen - pos);
 
-            // Quick microscopic filter to help when mismatches are small
-            // if maxMismatches == 0, use memcmp, otherwise cheap endpoints test.
             if (maxMismatches == 0) {
                 if (std::memcmp(adapterPtr, seqPtr + pos, compareLen) == 0) {
-                    // TODO: this copies name and adapter
                     results.push_back({
-                        adapter,
-                        name,
+                        patterns[i].sequence.to_string(),
+                        patterns[i].label.to_string(),  // Force clang-format to behave
                         pos,
-                        0  // no mismatches
+                        0,
                     });
                     break;
                 }
+
                 continue;
-            } else {
-                // If we allow only 1 mismatch, cheap 2-endpoints check can prune many positions.
-                if (maxMismatches <= 1 && compareLen >= 2) {
-                    if ((seqPtr[pos] != adapterPtr[0])
-                        && (seqPtr[pos + compareLen - 1] != adapterPtr[compareLen - 1])) {
-                        continue;
-                    }
+            } else if (maxMismatches <= 1 && compareLen >= 2) {
+                if ((seqPtr[pos] != adapterPtr[0])
+                    && (seqPtr[pos + compareLen - 1] != adapterPtr[compareLen - 1])) {
+                    continue;
                 }
             }
 
-            
-
             int mismatches = simd::hammingCap(seqPtr + pos, adapterPtr, compareLen, maxMismatches);
             if (mismatches <= maxMismatches) {
-                results.push_back({
-                    adapter,
-                    name,
-                    pos,
-                    mismatches  // store the mismatch count
-                });
-                break;  // first match for this adapter
+                results.push_back({patterns[i].sequence.to_string(),
+                                   patterns[i].label.to_string(),
+                                   pos,
+                                   mismatches});
+                break;
             }
         }
     }

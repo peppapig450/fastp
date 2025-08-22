@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -12,7 +13,11 @@
 #include <utility>
 #include <vector>
 
+#include "base/string_ref.hpp"
+
 namespace adapters {
+
+using fastp::base::StringRef;
 
 /**
  * @brief Aho-Corasick automaton for efficient multi-pattern string matching
@@ -28,8 +33,8 @@ public:
     using PatternId = std::uint32_t;
 
     struct PatternEntry {
-        std::string pattern;  // owned once
-        std::string name;     // owned once
+        StringRef sequence;  // view into getKnown() strings
+        StringRef label;     // view into getKnown() strings
     };
 
     struct Match {
@@ -39,41 +44,129 @@ public:
     };
 
 private:
-    // Node in the trie structure
-    struct TrieNode {
-        // TODO: since DNA only ever has 5-6 characters we could go lower to 6 characters,
-        // but we keep it at 256 for now.
-        static constexpr int kAlphabetSize = 256;  // Support all ASCII characters
+    // DNA Alphabet mapper
+    enum class Alpha : unsigned char { A = 0, C = 1, G = 2, T = 3, N = 4, Other = 5, Count = 6 };
 
-        std::array<std::unique_ptr<TrieNode>, kAlphabetSize> children {};
-        std::vector<PatternId> output;  // Pattern ids that end at this node
+    using Index                               = std::size_t;
+    using NodeIndex                           = std::int32_t;
+    static constexpr auto        InvalidNode  = static_cast<NodeIndex>(-1);
+    static constexpr auto        AlphabetSize = static_cast<Index>(Alpha::Count);
+    static constexpr std::size_t AlphaLutSize = 26;
+    using AlphaArray                          = std::array<Alpha, AlphaLutSize>;
 
-        TrieNode* failure = nullptr;  // Failure link for the AC algorithm
+    // Build a 26 entry lookup table once.
+    static auto alphaLut26() -> const AlphaArray& {
+        static const AlphaArray lookupTable = {{/* a */ Alpha::A,
+                                                /* b */ Alpha::Other,
+                                                /* c */ Alpha::C,
+                                                /* d */ Alpha::Other,
+                                                /* e */ Alpha::Other,
+                                                /* f */ Alpha::Other,
+                                                /* g */ Alpha::G,
+                                                /* h */ Alpha::Other,
+                                                /* i */ Alpha::Other,
+                                                /* j */ Alpha::Other,
+                                                /* k */ Alpha::Other,
+                                                /* l */ Alpha::Other,
+                                                /* m */ Alpha::Other,
+                                                /* n */ Alpha::N,
+                                                /* o */ Alpha::Other,
+                                                /* p */ Alpha::Other,
+                                                /* q */ Alpha::Other,
+                                                /* r */ Alpha::Other,
+                                                /* s */ Alpha::Other,
+                                                /* t */ Alpha::T,
+                                                /* u */ Alpha::T,  // treat U as T
+                                                /* v */ Alpha::Other,
+                                                /* w */ Alpha::Other,
+                                                /* x */ Alpha::Other,
+                                                /* y */ Alpha::Other,
+                                                /* z */ Alpha::Other}};
 
-        TrieNode() = default;
-    };
+        return lookupTable;
+    }
 
-    std::unique_ptr<TrieNode> root;
-    std::vector<PatternEntry> patterns_;                 // owns every (pattern, name) exactly once
-    bool                      built            = false;  // Track if failure links have been built
-    std::size_t               minPatternLength = std::numeric_limits<std::size_t>::max();
+    static auto getAlphaIndex(unsigned char nucleotide) noexcept -> Alpha {
+        constexpr unsigned char asciiLowerMask = 0x20;
 
-    // Helper to get or create child node
-    // TODO: come back and rename this to something other than `byteKey` maybe `base`?
-    auto getOrCreateChild(TrieNode* node, unsigned char byteKey) -> TrieNode* {
-        auto& childPtr = node->children[byteKey];
+        // ASCII lowercase only if A..Z
+        // NOTE: this can be made branchless using bit masking but that would be a bit of a
+        // premature optimization for now
+        const unsigned char lowerCase =
+            (nucleotide >= 'A' && nucleotide <= 'Z')
+                ? static_cast<unsigned char>(nucleotide | asciiLowerMask)
+                : nucleotide;
 
-        if (childPtr == nullptr) {
-            // This is equivalent to std::make_unique in C++14 or later
-            childPtr = std::unique_ptr<TrieNode>(new TrieNode());
+        // If 'a'..'z', use the 26-entry lookup table, otherwise use Other
+        const auto offset = static_cast<unsigned char>(lowerCase - 'a');
+        if (offset < static_cast<unsigned char>(AlphaLutSize)) {
+            return alphaLut26()[offset];
         }
 
-        return childPtr.get();
+        return Alpha::Other;
+    }
+
+    static auto getAlphaIndex(char nucleotide) noexcept -> Alpha {
+        return getAlphaIndex(static_cast<unsigned char>(nucleotide));
+    }
+
+    struct AutomatonNode {
+        // next state for each alphabet symbol (-1 if not set before build())
+        std::array<std::int32_t, AlphabetSize> nextState;
+
+        std::int32_t failureLink {0};  // fallback link
+        std::int32_t outputHead {-1};  // index into outputs_ list, -1 if none
+
+        AutomatonNode()
+            : nextState() {
+            nextState.fill(-1);
+        }
+    };
+
+    struct OutputLink {
+        PatternId    patternId;
+        std::int32_t nextLink;  // next in linked list, -1 if none
+    };
+
+    std::vector<AutomatonNode> nodes_;     // automaton states (0 = root)
+    std::vector<OutputLink>    outputs_;   // all outputs are packed here
+    std::vector<PatternEntry>  patterns_;  // registered pattern views
+    bool                       isBuilt_ {};
+    std::size_t                shortestPatternLength_;
+
+    static auto toIndex(NodeIndex index) -> Index {
+        assert(index >= 0);
+        return static_cast<Index>(index);
+    }
+    static auto toIndex(Alpha nucleotide) -> Index { return static_cast<Index>(nucleotide); }
+
+    auto node(NodeIndex index) -> AutomatonNode& { return nodes_[toIndex(index)]; }
+    auto node(NodeIndex index) const -> const AutomatonNode& { return nodes_[toIndex(index)]; }
+
+    auto nextNode(NodeIndex state, Index symbolIndex) -> NodeIndex& {
+        return nodes_[toIndex(state)].nextState[symbolIndex];
+    }
+
+    // Create and return new node index
+    auto createNewNode() -> int {
+        nodes_.emplace_back();
+        return static_cast<int>(nodes_.size() - 1);
+    }
+
+    // Add output link from node to pattern
+    void appendOutput(NodeIndex nodeIndex, PatternId patternId) {
+        auto& node = nodes_[toIndex(nodeIndex)];
+
+        outputs_.push_back({patternId, node.outputHead});
+        node.outputHead = static_cast<std::int32_t>(outputs_.size() - 1);
     }
 
 public:
     AhoCorasick()
-        : root(std::unique_ptr<TrieNode>(new TrieNode())) {}
+        : shortestPatternLength_(std::numeric_limits<std::size_t>::max()) {
+        nodes_.reserve(1);
+        createNewNode();  // root at state 0
+    }
 
     // Default destructor
     ~AhoCorasick() = default;
@@ -84,10 +177,25 @@ public:
     AhoCorasick(AhoCorasick&&)                         = default;
     auto operator=(AhoCorasick&&) -> AhoCorasick&      = default;
 
+    void reserve(std::size_t estimatedNodes, std::size_t estimatedOutputs) {
+        if (estimatedNodes > nodes_.size()) {
+            nodes_.reserve(estimatedNodes);
+        }
+        if (estimatedOutputs > outputs_.size()) {
+            outputs_.reserve(estimatedOutputs);
+        }
+        // TODO: since the number of adapters is known we can probably do this better
+        patterns_.reserve(estimatedOutputs);
+    }
+
     /**
      * @brief Access an interned pattern entry by id (no copies).
      */
-    auto entry(PatternId patternId) const -> const PatternEntry& { return patterns_[patternId]; }
+    auto getPatternEntry(PatternId patternId) const -> const PatternEntry& {
+        return patterns_[patternId];
+    }
+
+    auto getPatterns() const -> const std::vector<PatternEntry>& { return patterns_; }
 
     /**
      * @brief Add a pattern to the automaton
@@ -99,110 +207,119 @@ public:
             return;
         }
 
-        built            = false;  // Invalidate failure links
-        minPatternLength = std::min(minPatternLength, pattern.length());
+        isBuilt_               = false;  // Invalidate failure links
+        shortestPatternLength_ = std::min(shortestPatternLength_, pattern.length());
 
-        TrieNode* current = root.get();
-        for (auto chr : pattern) {
-            auto base = static_cast<unsigned char>(chr);
-            current   = getOrCreateChild(current, base);
+        NodeIndex currentNode = 0;  // root
+        for (auto nucleotide : pattern) {
+            const auto alphabetIndex = getAlphaIndex(static_cast<unsigned char>(nucleotide));
+            const auto symbolIndex   = toIndex(alphabetIndex);
+
+            // read onc
+            NodeIndex& childNode = nextNode(currentNode, symbolIndex);
+            if (childNode == InvalidNode) {
+                childNode = createNewNode();
+            }
+
+            currentNode = childNode;
         }
 
-        // Intern (pattern, name) once, remember id at the terminal node
-        auto patternId = static_cast<PatternId>(patterns_.size());
-        patterns_.push_back(PatternEntry {pattern, name});
-        current->output.push_back(patternId);
+        auto newPatternId = static_cast<PatternId>(patterns_.size());
+        patterns_.push_back({StringRef(pattern), StringRef(name)});
+        appendOutput(currentNode, newPatternId);
     }
 
+    // TODO: this should probably be a orchestrator for two smaller functions since this is
+    // essentially doing two different operations, initaliasing the root transitions, and BFS to
+    // buid the links
     /**
      * @brief Build failure links for the Aho-Corasick automaton
      * Must be called after all patterns are added and before searching
      */
     void build() {
-        if (built) {
+        if (isBuilt_) {
             return;
         }
 
-        std::queue<TrieNode*> nodeQueue;
+        std::queue<int> nodeQueue;
 
-        // Initialize: direct children of root have failure link to root
-        for (auto& childNode : root->children) {
-            if (childNode != nullptr) {
-                childNode->failure = root.get();
-                nodeQueue.push(childNode.get());
+        AutomatonNode& rootNode = nodes_.front();
+
+        // Initialize root transitions and enqueue children
+        for (Index alphabetIndex = 0; alphabetIndex < AlphabetSize; ++alphabetIndex) {
+            auto childIndex = static_cast<NodeIndex>(rootNode.nextState[alphabetIndex]);
+            if (childIndex != InvalidNode) {
+                node(childIndex).failureLink = 0;
+                nodeQueue.push(childIndex);
+            } else {
+                rootNode.nextState[alphabetIndex] = 0;  // missing root transitions -> root
             }
         }
 
         // BFS to build failure links
         while (!nodeQueue.empty()) {
-            TrieNode* current = nodeQueue.front();
+            NodeIndex currentIndex = nodeQueue.front();
             nodeQueue.pop();
+            auto& curentNode = node(currentIndex);
 
-            for (std::size_t symbol = 0; symbol < TrieNode::kAlphabetSize; ++symbol) {
-                if (current->children[symbol] == nullptr) {
-                    continue;
-                }
+            for (Index alphabetIndex = 0; alphabetIndex < AlphabetSize; ++alphabetIndex) {
+                NodeIndex childIndex = curentNode.nextState[alphabetIndex];
+                if (childIndex != InvalidNode) {
+                    nodeQueue.push(childIndex);
 
-                TrieNode* childNode = current->children[symbol].get();
-                nodeQueue.push(childNode);
+                    auto&       childNode   = node(childIndex);
+                    const auto& failureNode = node(curentNode.failureLink);
 
-                // Find failure link by walking up the failure chain
-                TrieNode* fallback = current->failure;
-                while (fallback != nullptr && fallback->children[symbol] == nullptr) {
-                    fallback = fallback->failure;
-                }
+                    childNode.failureLink = failureNode.nextState[alphabetIndex];
 
-                if (fallback != nullptr && fallback->children[symbol] != nullptr) {
-                    childNode->failure = fallback->children[symbol].get();
+                    NodeIndex inheritedNode = node(childNode.failureLink).outputHead;
+                    if (inheritedNode != InvalidNode) {
+                        Index tail = toIndex(inheritedNode);
+                        while (outputs_[tail].nextLink != InvalidNode) {
+                            tail = toIndex(outputs_[tail].nextLink);
+                        }
+
+                        outputs_[tail].nextLink = childNode.outputHead;
+                        childNode.outputHead    = inheritedNode;
+                    }
                 } else {
-                    childNode->failure = root.get();
-                }
-
-                // Merge output from failure link (for overlapping patterns)
-                if (childNode->failure != nullptr && !childNode->failure->output.empty()) {
-                    childNode->output.insert(childNode->output.end(),
-                                             childNode->failure->output.begin(),
-                                             childNode->failure->output.end());
+                    curentNode.nextState[alphabetIndex] =
+                        node(curentNode.failureLink).nextState[alphabetIndex];
                 }
             }
         }
 
-        built = true;
+        isBuilt_ = true;
     }
 
     /**
-     * @brief Search for all pattern occurrences into a caller-provided vector (reusable buffer).
+     * @brief Search for all pattern occurrences into a caller-provided vector (reusable
+     * buffer).
      * @param text The text to search in
-     * @param out Output vector to be filled; capacity can be reused across calls
+     * @param matches Output vector to be filled; capacity can be reused across calls
      */
-    void searchInto(const std::string& text, std::vector<Match>& out) {
-        if (!built) {
+    void searchInto(const std::string& text, std::vector<Match>& matches) {
+        if (!isBuilt_) {
             build();
         }
 
-        out.clear();
-        TrieNode* currentNode = root.get();
+        matches.clear();
+        matches.reserve(8);
 
-        for (std::size_t i = 0; i < text.length(); ++i) {
-            auto symbol = static_cast<unsigned char>(text[i]);
+        NodeIndex currentState = 0;
+        for (Index i = 0; i < text.size(); ++i) {
+            currentState = node(currentState).nextState[toIndex((getAlphaIndex(text[i])))];
 
-            // Follow failure links into we find a match or reach root
-            while (currentNode != root.get() && currentNode->children[symbol] == nullptr) {
-                currentNode = currentNode->failure;
-            }
+            NodeIndex outputIndex = node(currentState).outputHead;
+            while (outputIndex != InvalidNode) {
+                PatternId           patternId = outputs_[toIndex(outputIndex)].patternId;
+                const PatternEntry& entry     = patterns_[patternId];
 
-            if (currentNode->children[symbol] != nullptr) {
-                currentNode = currentNode->children[symbol].get();
-            }
+                matches.push_back({patternId,
+                                   i + 1 - entry.sequence.size(),  // record the start of the match
+                                   entry.sequence.size()});
 
-            // Report all matches at current position
-            if (!currentNode->output.empty()) {
-                for (PatternId patternId : currentNode->output) {
-                    const auto& patternPair = patterns_[patternId];
-                    out.push_back(Match {patternId,
-                                         i + 1 - patternPair.pattern.length(),
-                                         patternPair.pattern.length()});
-                }
+                outputIndex = outputs_[toIndex(outputIndex)].nextLink;
             }
         }
     }
@@ -233,31 +350,23 @@ public:
                       "onMatch must be callable as: void(PatternId, const PatternEntry&, "
                       "std::size_t, std::size_t)");
 
-        if (!built) {
+        if (!isBuilt_) {
             build();
         }
 
-        TrieNode* currentNode = root.get();
+        NodeIndex currentState = 0;
+        for (Index i = 0; i < text.size(); ++i) {
+            currentState = node(currentState).nextState[toIndex((getAlphaIndex(text[i])))];
 
-        for (std::size_t i = 0; i < text.length(); ++i) {
-            auto symbol = static_cast<unsigned char>(text[i]);
+            NodeIndex outputIndex = node(currentState).outputHead;
+            while (outputIndex != InvalidNode) {
+                const PatternId     patternId     = outputs_[toIndex(outputIndex)].patternId;
+                const PatternEntry& entry         = patterns_[patternId];
+                const Index         patternLength = entry.sequence.size();
+                const Index         matchPosition = i + 1 - patternLength;
 
-            while (currentNode != root.get() && currentNode->children[symbol] == nullptr) {
-                currentNode = currentNode->failure;
-            }
-
-            if (currentNode->children[symbol] != nullptr) {
-                currentNode = currentNode->children[symbol].get();
-            }
-
-            if (!currentNode->output.empty()) {
-                for (PatternId patternId : currentNode->output) {
-                    const auto& patternPair = patterns_[patternId];
-                    onMatch(patternId,
-                            patternPair,
-                            i + 1 - patternPair.pattern.length(),
-                            patternPair.pattern.length());
-                }
+                onMatch(patternId, entry, matchPosition, patternLength);
+                outputIndex = outputs_[toIndex(outputIndex)].nextLink;
             }
         }
     }
@@ -269,30 +378,41 @@ public:
      * @return (found, Match) pair; when found==false, Match contents are unspecified
      */
     auto findFirst(const std::string& text, std::size_t startPos = 0) -> std::pair<bool, Match> {
-        if (!built) {
+        if (!isBuilt_) {
             build();
         }
 
-        TrieNode* currentNode = root.get();
+        const Index textLength = text.size();
+        if (startPos >= textLength) {
+            return {false, Match {}};
+        }
 
-        for (std::size_t i = startPos; i < text.length(); ++i) {
-            auto symbol = static_cast<unsigned char>(text[i]);
+        NodeIndex currentState = 0;
 
-            while (currentNode != root.get() && currentNode->children[symbol] == nullptr) {
-                currentNode = currentNode->failure;
-            }
+        // Advance automaton up to startPos
+        for (Index pos = 0; pos < startPos; ++pos) {
+            const Index symbolIndex = toIndex(getAlphaIndex(text[pos]));
+            currentState            = node(currentState).nextState[symbolIndex];
+        }
 
-            if (currentNode->children[symbol] != nullptr) {
-                currentNode = currentNode->children[symbol].get();
-            }
+        for (Index pos = startPos; pos < textLength; ++pos) {
+            const Index symbolIndex = toIndex(getAlphaIndex(text[pos]));
+            currentState            = node(currentState).nextState[symbolIndex];
 
-            if (!currentNode->output.empty()) {
-                PatternId   patternId   = currentNode->output[0];
-                const auto& patternPair = patterns_[patternId];
+            NodeIndex outputNodeIndex = node(currentState).outputHead;
+            if (outputNodeIndex != InvalidNode) {
+                const PatternId patternId =
+                    outputs_[toIndex(outputNodeIndex)].patternId;  // first match is enough
+                const PatternEntry& patternInfo = patterns_[patternId];
+                const Index         matchLength = patternInfo.sequence.size();
+                const Index         matchStart  = pos + 1 - matchLength;
+
                 return {true,
-                        Match {patternId,
-                               i + 1 - patternPair.pattern.length(),
-                               patternPair.pattern.length()}};
+                        Match {
+                            patternId,    // matched pattern
+                            matchStart,   // start position in text
+                            matchLength,  // match length
+                        }};
             }
         }
 
@@ -303,18 +423,14 @@ public:
      * @brief Check if automaton contains any patterns
      */
     auto empty() const noexcept -> bool {
-        using ChildPtr = std::unique_ptr<TrieNode>;
-
-        // Check if root has any children
-        return std::all_of(root->children.begin(),
-                           root->children.end(),
-                           [](const ChildPtr& child) -> bool { return child == nullptr; });
+        // root has any outgoing edge?
+        return patterns_.empty();
     }
 
     /**
      * @brief Get minimum pattern length (useful for optimization)
      */
-    auto getMinPatternLength() const noexcept -> std::size_t { return minPatternLength; }
+    auto getMinPatternLength() const noexcept -> std::size_t { return shortestPatternLength_; }
 };
 
 }  // namespace adapters
