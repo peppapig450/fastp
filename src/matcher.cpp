@@ -4,64 +4,7 @@
 #include <iostream>
 #include <limits>
 
-// Conditionally enable macros for compiler hints related to branch prediction
-#ifndef LIKELY_BRANCH
-    #if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER) \
-        || defined(__INTEL_LLVM_COMPILER)
-        // Hint to the compiler that the condition is likely true (used for branch prediction)
-        #define LIKELY_BRANCH(x) __builtin_expect(!!(x), 1)
-
-        // Hint to the compiler that the condition is likely false (used for branch prediction)
-        #define UNLIKELY_BRANCH(x) __builtin_expect(!!(x), 0)
-    #else
-        // MSVC and others do not support branch prediction hints so we define empty fallbacks (they
-        // have no effect)
-        #define LIKELY_BRANCH(x) (x)
-        #define UNLIKELY_BRANCH(x) (x)
-    #endif
-#endif
-
-// Helper macros for passing parameters
-#define STRINGIFY(x) #x
-#define TOSTRING(x) STRINGIFY(x)
-
-// Per compiler macros for unrolling N iterations of a loop
-#ifndef UNROLL_LOOP
-    #if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
-        // Clang or ICX (Intel LLVM-based compiler)
-        #define UNROLL_LOOP(N) _Pragma(TOSTRING(clang loop unroll_count(N)))
-    #elif defined(__INTEL_COMPILER)
-        // ICC classic (non-LLVM)
-        #define UNROLL_LOOP(N) _Pragma(TOSTRING(unroll(N)))
-    #elif defined(__GNUC__)
-        #define UNROLL_LOOP(N) _Pragma(TOSTRING(GCC unroll N))
-    #elif defined(_MSC_VER)
-        // MSVC doesn't support unroll count reliably; fallback to simple unroll hint
-        #define UNROLL_LOOP(N) __pragma(loop(unroll))
-    #else
-        #define UNROLL_LOOP(N)
-    #endif
-#endif
-
-// Macro to apply compiler-specific restrict qualifiers for pointers.
-//
-// `RESTRICT` hints to the compiler that pointers annotated with it do NOT alias with other
-// pointers, allowing for more aggressive optimizations (e.g., vectorization, better instruction
-// scheduling).
-//
-// WARNING: Only apply `RESTRICT` to pointers you can *guarantee* do not alias with other pointers.
-// Misusing restrict leads to undefined behavior and quiet miscompilations.
-//
-// TLDR: Use this on local, non-overlapping buffers (e.g., scratch space) for performance wins.
-// If you’re unsure, do not use `RESTRICT`. Bad restrict is worse than no restrict.
-#if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER) \
-    || defined(__INTEL_LLVM_COMPILER)
-    #define RESTRICT __restrict__
-#elif defined(_MSC_VER)
-    #define RESTRICT __restrict
-#else
-    #define RESTRICT
-#endif
+#include "base/compiler_hints.hpp"
 
 // Call the internal implementation using a lambda function.
 //
